@@ -33,20 +33,34 @@ Configure your environment variables:
 
 ## Usage
 
-You can use the `devlog-ai` command anywhere if you ran `npm link`.
+There are two primary ways to run the tool: using `npm start` for local development or using the linked global command `devlog-ai`.
 
-### Generate a Daily Standup
-Generates a structured standup report covering "Yesterday I...", "Today I will...", etc.
+### 1. Running Locally (Development)
+
+You can run the tool directly using the `npm start` command. When passing arguments to the script via npm, remember to include `--` before the arguments.
+
 ```bash
+# Generate a daily standup
+npm start -- standup
+
+# Specify how many days back to look
+npm start -- standup --days 3
+
+# Generate a PR description
+npm start -- pr
+```
+
+### 2. Running as a Global Command
+
+If you ran `npm link` during installation, the tool is linked globally on your system. You can use the `devlog-ai` command from any directory:
+
+```bash
+# Generate a daily standup
 devlog-ai standup
-```
-Optionally, specify how many days back to look:
-```bash
-devlog-ai standup --days 3
-```
 
-### Generate a PR Description
-Generates a comprehensive Pull Request description based on your recent activity.
-```bash
+# Specify how many days back to look
+devlog-ai standup --days 3
+
+# Generate a PR description
 devlog-ai pr
 ```

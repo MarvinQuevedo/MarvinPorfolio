@@ -14,7 +14,7 @@ export async function summarizeWork(gitData: string, format: 'standup' | 'pr'): 
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: 'llama3', // Defaulting to llama3, can be configurable
+                    model: process.env.OLLAMA_MODEL || 'llama3', // Make the model configurable from .env
                     prompt: prompt,
                     stream: false
                 })
