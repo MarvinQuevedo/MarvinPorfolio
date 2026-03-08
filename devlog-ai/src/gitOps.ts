@@ -1,11 +1,35 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 
-const git: SimpleGit = simpleGit();
+const getGitInstance = (repoPath?: string): SimpleGit => {
+    return repoPath ? simpleGit(repoPath) : simpleGit();
+};
 
-export async function getRecentCommits(days: number = 1): Promise<string> {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+export async function getRecentCommits(options: { days?: number, date?: string, repoPath?: string } = {}): Promise<string> {
+  const git = getGitInstance(options.repoPath);
+  
+  let since = '';
+  let until = '';
+  
+  if (options.date) {
+    // If date is provided (e.g. YYYY-MM-DD), set since to start of day and until to end of day
+    const targetDate = new Date(options.date);
+    targetDate.setHours(0, 0, 0, 0);
+    since = targetDate.toISOString();
+    
+    const endDate = new Date(options.date);
+    endDate.setHours(23, 59, 59, 999);
+    until = endDate.toISOString();
+  } else {
+    const days = options.days || 1;
+    since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  }
+
   try {
-    const log = await git.log({ '--since': since });
+    const logOptions: any = { '--since': since };
+    if (until) {
+       logOptions['--until'] = until;
+    }
+    const log = await git.log(logOptions);
     let commitsText = '';
     log.all.forEach(commit => {
       commitsText += `Commit: ${commit.hash}\nAuthor: ${commit.author_name}\nDate: ${commit.date}\nMessage: ${commit.message}\n\n`;
@@ -21,7 +45,8 @@ export async function getRecentCommits(days: number = 1): Promise<string> {
   }
 }
 
-export async function getUncommittedChanges(): Promise<string> {
+export async function getUncommittedChanges(repoPath?: string): Promise<string> {
+  const git = getGitInstance(repoPath);
   try {
     const status = await git.status();
     let changesText = `Modified files: ${status.modified.length}\n`;
@@ -39,7 +64,8 @@ export async function getUncommittedChanges(): Promise<string> {
   }
 }
 
-export async function getBranchInfo(): Promise<string> {
+export async function getBranchInfo(repoPath?: string): Promise<string> {
+    const git = getGitInstance(repoPath);
     try {
         const branch = await git.branch();
         return `Current Branch: ${branch.current}\n`;

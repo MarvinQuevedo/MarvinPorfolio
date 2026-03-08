@@ -16,11 +16,17 @@ program
   .command('standup')
   .description('Generate a daily standup report')
   .option('-d, --days <number>', 'Number of days to look back for commits', '1')
+  .option('--date <string>', 'Specific date to look at (YYYY-MM-DD)')
+  .option('-r, --repo <path>', 'Path to the git repository', '.')
   .action(async (options) => {
     console.log("Gathering Git activities...");
-    const branch = await getBranchInfo();
-    const commits = await getRecentCommits(Number(options.days));
-    const uncommitted = await getUncommittedChanges();
+    const branch = await getBranchInfo(options.repo);
+    const commits = await getRecentCommits({ 
+        days: Number(options.days), 
+        date: options.date, 
+        repoPath: options.repo 
+    });
+    const uncommitted = await getUncommittedChanges(options.repo);
 
     const allGitData = `${branch}\n--- Recent Commits ---\n${commits}\n--- Uncommitted Changes ---\n${uncommitted}`;
     
@@ -40,11 +46,17 @@ program
   .command('pr')
   .description('Generate a detailed PR description')
   .option('-d, --days <number>', 'Number of days to look back for commits', '1')
+  .option('--date <string>', 'Specific date to look at (YYYY-MM-DD)')
+  .option('-r, --repo <path>', 'Path to the git repository', '.')
   .action(async (options) => {
     console.log("Gathering Git activities...");
-    const branch = await getBranchInfo();
-    const commits = await getRecentCommits(Number(options.days));
-    const uncommitted = await getUncommittedChanges();
+    const branch = await getBranchInfo(options.repo);
+    const commits = await getRecentCommits({ 
+        days: Number(options.days), 
+        date: options.date, 
+        repoPath: options.repo 
+    });
+    const uncommitted = await getUncommittedChanges(options.repo);
 
     const allGitData = `${branch}\n--- Recent Commits ---\n${commits}\n--- Uncommitted Changes ---\n${uncommitted}`;
 

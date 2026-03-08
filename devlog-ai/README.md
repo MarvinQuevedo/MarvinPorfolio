@@ -58,9 +58,24 @@ If you ran `npm link` during installation, the tool is linked globally on your s
 # Generate a daily standup
 devlog-ai standup
 
-# Specify how many days back to look
-devlog-ai standup --days 3
-
 # Generate a PR description
 devlog-ai pr
+```
+
+### Options / Flags
+
+Both `standup` and `pr` commands accept the following optional flags:
+
+- `-d, --days <number>`: Number of days to look back for formatting (default is `1`).
+- `--date <YYYY-MM-DD>`: Specify an exact date to filter your git commits. Useful if you missed yesterday's standup.
+- `-r, --repo <path>`: Provide an absolute or relative path to the git repository you want to analyze. If not provided, it defaults to the current directory (`.`).
+
+**Examples:**
+
+```bash
+# Look back 3 days
+devlog-ai standup --days 3
+
+# Specify a repo path and a specific date
+devlog-ai standup --repo ../my-other-project --date 2026-03-06
 ```
