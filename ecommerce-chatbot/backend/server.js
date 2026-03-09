@@ -1,11 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const OpenAI = require('openai');
-const { Ollama } = require('ollama');
 require('dotenv').config();
 const fs = require('fs');
 const crypto = require('crypto');
+
+// ─── AI Providers ─────────────────────────────────────────────────────────────
+const deepseekProvider = require('./ai-deepseek');
+const ollamaProvider   = require('./ai-ollama');
 
 const db = require('./database');
 
@@ -56,16 +58,7 @@ const AI_PROVIDER = process.env.AI_PROVIDER || 'deepseek';
 const DELIVERY_MIN_DAYS = parseInt(process.env.DELIVERY_MIN_DAYS) || 3;
 const DELIVERY_MAX_DAYS = parseInt(process.env.DELIVERY_MAX_DAYS) || 5;
 
-// Initialize DeepSeek via OpenAI SDK
-const openai = new OpenAI({
-  baseURL: 'https://api.deepseek.com',
-  apiKey: process.env.DEEPSEEK_API_KEY
-});
-const DEEPSEEK_MODEL = 'deepseek-chat';
-
-// Initialize Ollama
-const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
-const OLLAMA_MODEL = 'mistral:7b';
+// AI clients are initialised inside their respective provider modules.
 
 const tools = [
   // ─── Catalog Tools ───────────────────────────────────────────────────────────
@@ -289,273 +282,51 @@ async function handleToolCall(name, args) {
 
 
 
-const getSystemPrompt = (language = "English") => `
-You are a warm, friendly and enthusiastic sales assistant for an online store. Be conversational, encouraging and personable at all times.
-RULES:
-1. CATALOG: You do NOT know the products in advance. ALWAYS use list_products or search_products to look them up.
-   - When the user asks to see products or the catalog → call list_products.
-   - When the user mentions a product type or keyword → call search_products. CRITICAL: The catalog is stored in ENGLISH. You MUST always translate search terms to English before calling search_products. Examples: "auriculares" → "headphones", "reloj" → "watch", "teclado" → "keyboard".
-   - When a product is out of stock and you want to suggest similar items → call search_products using the English category/type of that product (e.g. if "Wireless Headphones" is out of stock, search "headphones" or "audio").
-   - When a user wants details about a specific product they already saw → call get_product_details.
-2. FORMAT: Be brief. Only show Name and Price. Always include the product image URL.
-   - After showing a product and asking if the user wants to buy it, ALWAYS end your message with EXACTLY this line (no variations):
-     (1) Sí, quiero comprarlo  (2) No, gracias
-3. INVENTORY: STRICTLY NEVER mention stock count unless inventory is ≤ 2 units OR the user explicitly asks about stock.
-   - FORBIDDEN: "Tenemos X unidades", "hay X disponibles", "X en stock" — when X > 2. Simply omit this info.
-   - If inventory IS ≤ 2, add urgency: e.g. "¡Date prisa, quedan muy pocas unidades! ⚡"
-4. ORDERING: To create an order, you MUST collect: Full Name, Shipping Address, and Phone Number.
-   - TONE: Be warm and encouraging. Use phrases like "¡Perfecto!", "¡Genial!", "¡Gracias [nombre]!", emojis are welcome.
-   - Case A — User sends ALL three fields in one message (each on its own line or separated by commas): parse them at once and immediately call create_order.
-   - Case B — User provides data ONE BY ONE (one field per message):
-       • You receive only the name → respond warmly acknowledging the name, then ask ONLY for the shipping address. Example: "¡Gracias, [nombre]! Ahora necesito tu dirección de envío 📍"
-       • You receive the address (name already known) → respond warmly, then ask ONLY for the phone number. Example: "¡Perfecto! Ya casi terminamos 😊 ¿Cuál es tu número de teléfono? 📱"
-       • You receive the phone (name + address already known) → immediately call create_order. No confirmation needed.
-       • You receive the phone before the address → acknowledge and ask ONLY for the address next.
-   - PHONE DETECTION: Any sequence of digits (6–15 chars, may include spaces, dashes, parentheses) alone on a line OR the only numeric token in the message IS the phone number. Never ask for it again once provided.
-   - ADDRESS DETECTION: Anything containing street/location words (e.g. Casa, Calle, Av, Col, No., #, Block, Manzana, Polígono, Lote, Barrio, Sector, Ciudad, Municipio, Depto or a cardinal direction followed by a number) IS the address. Accept exactly as written. NEVER question its format or completeness.
-   - If ALL three fields are present across the conversation, call create_order IMMEDIATELY without asking for confirmation.
-   - DO NOT invent data. DO NOT call create_order with empty or fake values.
-   - PRODUCT ID: ALWAYS use the EXACT product_id string that was returned by list_products or search_products (e.g. "p3", "p7"). NEVER guess, increment, or modify it. If unsure, look at the most recent tool result in the conversation.
-   - NEVER call search_products before create_order. Use the product_id already in the conversation history.
-   - After creating the order, warmly tell the user the estimated delivery time is ${DELIVERY_MIN_DAYS}–${DELIVERY_MAX_DAYS} business days.
-5. TRACKING: ONLY call check_status if the user explicitly gives you a TRK- code.
-6. NO TAGS: Never output <...>, [JSON], or internal markup. Speak only in plain text.
-7. Language: ${language}.
-8. FOLLOW-UP: After completing any process (order created, status checked, question answered), ask if you can help with anything else, ending with EXACTLY this line:
-   (1) Sí  (2) No, gracias
-   If the user is done, reply with a warm, personalized goodbye. 😊
-`;
-
-
-
-
-// ─── DSML helpers ────────────────────────────────────────────────────────────
-// DeepSeek sometimes leaks its internal DSML tool-call format as plain text
-// instead of emitting structured tool_calls. We handle this in two ways:
-//   1. isDsmlLeak()        – detects the leak
-//   2. parseDsmlToolCall() – extracts the intended function name + args so we
-//                           can execute the tool ourselves and recover silently.
-
-// NOTE ON DSML CHARACTERS:
-// DeepSeek outputs DSML tags using the FULLWIDTH vertical bar ｜ (U+FF5C)
-// instead of the ASCII pipe | (U+007C). All regexes below use [|\uff5c] to
-// match both so recovery works regardless of which variant the model uses.
-
-function isDsmlLeak(raw) {
-  if (!raw) return false;
-  // A leak is when the response IS (or contains) a DSML function-call block.
-  // We detect it by looking for the DSML invoke/function_calls opening tag,
-  // NOT by checking if the stripped content is empty (that fails when params
-  // have non-empty values like "headphones").
-  return /[|\uFF5C]DSML[|\uFF5C](invoke|function_calls)/i.test(raw);
-}
-
-// Returns { name, args } or null if the DSML can't be parsed.
-function parseDsmlToolCall(raw) {
-  try {
-    // Match: <[|｜]DSML[|｜]invoke name="fn_name">...</[|｜]DSML[|｜]invoke>
-    const invokeMatch = raw.match(/<[|\uFF5C]DSML[|\uFF5C]invoke\s+name="([^"]+)"[\s\S]*?<\/[|\uFF5C]DSML[|\uFF5C]invoke>/i);
-    if (!invokeMatch) return null;
-
-    const fnName = invokeMatch[1];
-    const block  = invokeMatch[0];
-
-    // Match: <[|｜]DSML[|｜]parameter name="key" ...>value</[|｜]DSML[|｜]parameter>
-    const paramRegex = /<[|\uFF5C]DSML[|\uFF5C]parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[|\uFF5C]DSML[|\uFF5C]parameter>/gi;
-    const args = {};
-    let m;
-    while ((m = paramRegex.exec(block)) !== null) {
-      args[m[1]] = m[2].trim();
-    }
-
-    return { name: fnName, args };
-  } catch (e) {
-    return null;
-  }
-}
-
-function sanitizeContent(raw) {
-  return (raw || '')
-    // Strip full DSML blocks first
-    .replace(/<[|\uFF5C]DSML[|\uFF5C][\s\S]*?<\/[|\uFF5C]DSML[|\uFF5C][^>]*>/gi, '')
-    // Strip any remaining angle-bracket tags
-    .replace(/<[\s\S]*?>/gi, '')
-    .trim();
-}
-
-const MAX_RETRIES = 2;
-
-async function callAI(currentMessages, withTools = true) {
-  if (AI_PROVIDER === 'deepseek') {
-    const opts = { model: DEEPSEEK_MODEL, messages: currentMessages };
-    if (withTools) opts.tools = tools;
-    const completion = await openai.chat.completions.create(opts);
-    return completion.choices[0].message;
-  } else {
-    const opts = { model: OLLAMA_MODEL, messages: currentMessages };
-    if (withTools) opts.tools = tools;
-    const response = await ollama.chat(opts);
-    return response.message;
-  }
-}
 
 // ─── /api/chat endpoint ───────────────────────────────────────────────────────
 app.post('/api/chat', async (req, res) => {
-  const { messages, language } = req.body;
+  const { messages, language, model } = req.body;
   if (!messages) return res.status(400).json({ error: "messages array required" });
 
+  // Quick Ollama connectivity check
   if (AI_PROVIDER === 'ollama') {
     try {
       await fetch('http://127.0.0.1:11434/', { method: 'GET' });
-    } catch(e) {
+    } catch (e) {
       return res.status(500).json({ error: "Ollama is not running. Please start Ollama locally." });
     }
   }
 
   try {
-    // Only keep the last 8 messages to save tokens
-    const recentMessages = messages.slice(-8);
-    const baseMessages = [
-      { role: 'system', content: getSystemPrompt(language) },
-      ...recentMessages
-    ];
+    // Keep only the last 8 messages to save tokens (no system message — each provider adds its own)
+    const history = messages.slice(-8);
 
     logMessage(`--- NEW CHAT REQUEST ---`);
     logMessage(`Provider: ${AI_PROVIDER}`);
-    logMessage(`Last User Input: ${recentMessages[recentMessages.length - 1]?.content}`);
+    logMessage(`Last User Input: ${history[history.length - 1]?.content}`);
 
     let finalContent = null;
-    let attempt = 0;
 
-    while (attempt <= MAX_RETRIES && finalContent === null) {
-      if (attempt > 0) {
-        logMessage(`[RETRY ${attempt}/${MAX_RETRIES}] Empty/DSML response detected, retrying...`);
-        // Small exponential backoff: 500ms, 1000ms
-        await new Promise(r => setTimeout(r, 500 * attempt));
-      }
-
-      const currentMessages = [...baseMessages];
-      let messageObj = await callAI(currentMessages, true);
-
-      logMessage(`AI Response format: hasToolCalls=${!!(messageObj.tool_calls && messageObj.tool_calls.length > 0)}`);
-      logMessage(`AI Raw Content: ${messageObj.content}`);
-
-      // Handle tool calls
-      if (messageObj.tool_calls && messageObj.tool_calls.length > 0) {
-        currentMessages.push(messageObj);
-
-        for (const toolCall of messageObj.tool_calls) {
-          let functionName, functionArgs, toolCallId;
-
-          if (AI_PROVIDER === 'deepseek') {
-            functionName = toolCall.function.name;
-            functionArgs = JSON.parse(toolCall.function.arguments);
-            toolCallId = toolCall.id;
-          } else {
-            functionName = toolCall.function.name;
-            functionArgs = toolCall.function.arguments;
-          }
-
-          logMessage(`-> Calling Tool: ${functionName}`);
-          logMessage(`-> Tool Args: ${AI_PROVIDER === 'deepseek' ? toolCall.function.arguments : JSON.stringify(functionArgs)}`);
-
-          const toolResult = await handleToolCall(functionName, functionArgs);
-          logMessage(`<- Tool Result: ${toolResult}`);
-
-          if (AI_PROVIDER === 'deepseek') {
-            currentMessages.push({ tool_call_id: toolCallId, role: 'tool', name: functionName, content: toolResult });
-          } else {
-            currentMessages.push({ role: 'tool', name: functionName, content: toolResult });
-          }
-        }
-
-        // Final response after tools (no tools param → pure text reply)
-        messageObj = await callAI(currentMessages, false);
-        logMessage(`Final AI Content Appended: ${messageObj.content}`);
-
-        // ── DSML leak recovery in the final-response phase ──────────────────
-        // The model wants to make ANOTHER tool call but leaked it as plain text.
-        // Parse the DSML, execute the tool ourselves, then ask for plain text.
-        if (isDsmlLeak(messageObj.content || '')) {
-          logMessage(`[DSML-RECOVERY] Leak detected in final response. Attempting DSML parse...`);
-          const leaked = parseDsmlToolCall(messageObj.content || '');
-
-          if (leaked) {
-            logMessage(`[DSML-RECOVERY] Parsed tool: ${leaked.name} | args: ${JSON.stringify(leaked.args)}`);
-            const recoveryResult = await handleToolCall(leaked.name, leaked.args);
-            logMessage(`[DSML-RECOVERY] Tool result: ${recoveryResult}`);
-
-            // Push a synthetic tool result and ask for a plain-text reply.
-            // DeepSeek requires: assistant msg with tool_calls → tool msg with matching tool_call_id.
-            // We synthesize a valid tool_calls entry so the API doesn't reject the tool message.
-            const recoveryCallId = 'dsml-recovery-' + Date.now();
-            currentMessages.push({
-              role: 'assistant',
-              content: null,
-              tool_calls: AI_PROVIDER === 'deepseek' ? [{
-                id: recoveryCallId,
-                type: 'function',
-                function: {
-                  name: leaked.name,
-                  arguments: JSON.stringify(leaked.args),
-                },
-              }] : undefined,
-            });
-            currentMessages.push({
-              role: 'tool',
-              name: leaked.name,
-              ...(AI_PROVIDER === 'deepseek' ? { tool_call_id: recoveryCallId } : {}),
-              content: recoveryResult
-            });
-            currentMessages.push({
-              role: 'user',
-              content: 'Ahora responde al cliente en texto plano con el resultado anterior. No uses tags ni código.'
-            });
-
-            messageObj = await callAI(currentMessages, false);
-            logMessage(`[DSML-RECOVERY] Final recovered content: ${messageObj.content}`);
-          } else {
-            logMessage(`[DSML-RECOVERY] Could not parse DSML. Will retry outer loop.`);
-            attempt++;
-            continue;
-          }
-        }
-        // ────────────────────────────────────────────────────────────────────
-      }
-
-      const raw = messageObj.content || '';
-
-      // Detect any remaining DSML leak (e.g. on first response before tool calls)
-      if (isDsmlLeak(raw)) {
-        attempt++;
-        continue; // retry outer loop
-      }
-
-      finalContent = sanitizeContent(raw);
-
-      // Also retry if after sanitizing content is blank
-      if (!finalContent) {
-        finalContent = null;
-        attempt++;
-        continue;
-      }
-
-      res.json({ message: { role: messageObj.role || 'assistant', content: finalContent } });
-      return;
+    if (AI_PROVIDER === 'deepseek') {
+      finalContent = await deepseekProvider.chat(history, tools, handleToolCall, logMessage, language, DELIVERY_MIN_DAYS, DELIVERY_MAX_DAYS, model);
+    } else {
+      finalContent = await ollamaProvider.chat(history, tools, handleToolCall, logMessage, language, DELIVERY_MIN_DAYS, DELIVERY_MAX_DAYS, model);
     }
 
-    // All retries exhausted — return a friendly fallback message
-    logMessage(`[WARN] All ${MAX_RETRIES} retries exhausted. Returning fallback message.`);
-    const fallback = language === 'Spanish' || language === 'Español'
-      ? 'Ocurrió un problema al procesar tu mensaje. Por favor intenta de nuevo.'
-      : 'Something went wrong processing your request. Please try again.';
-    res.json({ message: { role: 'assistant', content: fallback } });
+    if (!finalContent) {
+      logMessage(`[WARN] No content returned from provider. Sending fallback.`);
+      const fallback = (language === 'Spanish' || language === 'Español')
+        ? 'Ocurrió un problema al procesar tu mensaje. Por favor intenta de nuevo.'
+        : 'Something went wrong processing your request. Please try again.';
+      return res.json({ message: { role: 'assistant', content: fallback } });
+    }
+
+    res.json({ message: { role: 'assistant', content: finalContent } });
 
   } catch (error) {
     logMessage(`ERROR: ${error.message}`);
-    res.status(500).json({ error: "AI Error. " + error.message });
+    res.status(500).json({ error: 'AI Error. ' + error.message });
   }
-
 });
 
 app.get('/api/orders/:id', async (req, res) => {
@@ -637,6 +408,24 @@ app.get('/api/products/search', async (req, res) => {
     db.getProductCount(query),
   ]);
   res.json({ products, total, page, totalPages: Math.ceil(total / limit) });
+});
+
+app.get('/api/config', async (req, res) => {
+  if (AI_PROVIDER === 'ollama') {
+    try {
+      const resp = await fetch('http://127.0.0.1:11434/api/tags');
+      if (resp.ok) {
+        const data = await resp.json();
+        const models = data.models.map(m => m.name);
+        return res.json({ provider: 'ollama', models: models.length ? models : ['mistral'] });
+      }
+    } catch (e) {
+      logMessage('[CONFIG] Could not fetch ollama models: ' + e.message);
+    }
+    return res.json({ provider: 'ollama', models: [process.env.OLLAMA_MODEL || 'mistral'] });
+  } else {
+    return res.json({ provider: 'deepseek', models: ['deepseek-chat'] });
+  }
 });
 
 // Endpoint to simulate payment

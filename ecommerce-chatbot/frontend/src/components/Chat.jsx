@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Bot, User, Cpu } from 'lucide-react';
+import ProductsPanel from './ProductsPanel';
+import OrdersPanel from './OrdersPanel';
 
 const renderText = (text) => {
   // Very basic markdown parsing for Links, URLs, Bold and Images
@@ -71,6 +73,20 @@ export default function Chat() {
   const messagesEndRef = useRef(null);
   // Keep ref to language so SSE callbacks always see current value
   const languageRef = useRef(language);
+  
+  const [config, setConfig] = useState(null);
+  const [selectedModel, setSelectedModel] = useState('');
+
+  useEffect(() => {
+    axios.get('http://localhost:3001/api/config')
+      .then(res => {
+        setConfig(res.data);
+        if (res.data.models && res.data.models.length > 0) {
+          setSelectedModel(res.data.models[0]);
+        }
+      })
+      .catch(console.log);
+  }, []);
 
   useEffect(() => { languageRef.current = language; }, [language]);
 
@@ -222,7 +238,8 @@ export default function Chat() {
     try {
       const { data } = await axios.post('http://localhost:3001/api/chat', {
         messages: payloadMessages,
-        language: language
+        language: language,
+        model: selectedModel
       });
       
       const botResponse = data.message;
@@ -289,12 +306,28 @@ export default function Chat() {
   }
 
   return (
-    <div style={{ display: 'flex', gap: '1.5rem', width: '100%', maxWidth: '1200px', height: '90vh' }}>
+    <div style={{ display: 'flex', gap: '1.5rem', width: '100%', maxWidth: '1600px', height: '90vh', margin: '0 auto' }}>
       <div className="chat-window glass-panel" style={{ flex: 2, height: '100%' }}>
         <div className="chat-header">
           <h1><Cpu size={24} color="var(--primary)" /> Store AI Agent</h1>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Powered by AI Agent
+            Powered by {config?.provider === 'ollama' ? 'Ollama' : 'DeepSeek'} 
+            {config?.models && config.models.length > 1 && config.provider === 'ollama' && (
+              <select 
+                value={selectedModel} 
+                onChange={e => setSelectedModel(e.target.value)}
+                style={{ marginLeft: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 5px', fontFamily: 'inherit' }}
+              >
+                {config.models.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            )}
+            {((config?.models && config.models.length === 1) || config?.provider === 'deepseek') && (
+               <span style={{ marginLeft: '10px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 5px' }}>
+                 {config?.models?.[0] || selectedModel || 'deepseek-chat'}
+               </span>
+            )}
           </div>
         </div>
 
@@ -387,74 +420,13 @@ export default function Chat() {
         </form>
       </div>
 
-      <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto' }}>
-        <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>📢 Facebook Ads</h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Simula que el cliente hace clic en un anuncio de Facebook.</p>
-        
-        {products.map(p => (
-          <div key={p.id} style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <img src={p.image} alt={p.name} style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '8px' }} />
-            <h4 style={{ margin: 0 }}>{p.name}</h4>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>${p.price}</span>
-            </div>
-            <button 
-              className="primary-btn" 
-              style={{ padding: '0.6rem', fontSize: '0.9rem', marginTop: '0.5rem' }}
-              onClick={() => simulateAdClick(p)}
-              disabled={isLoading}
-            >
-              Simular Clic en Anuncio
-            </button>
-          </div>
-        ))}
-        
-        <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginTop: '1rem' }}>📦 Admin Dashboard</h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Lista de pedidos y cambio de estados.</p>
-        
-        {orders.length === 0 ? (
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No hay pedidos todavía.</p>
-        ) : (
-          orders.map(o => (
-            <div key={o.trackId} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{o.trackId}</span>
-                <span style={{ fontSize: '0.8rem', color: o.status === 'Pendiente de Pago' ? 'orange' : 'var(--primary)' }}>
-                  {o.status}
-                </span>
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {new Date(o.createdAt).toLocaleString()}
-              </div>
-              <span style={{ fontSize: '0.85rem' }}>{o.name} - <b>{o.productName}</b> (${o.amount})</span>
-              
-              <div style={{ background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '6px', fontSize: '0.7rem' }}>
-                <strong>Historial:</strong>
-                {o.history && o.history.map((h, i) => (
-                  <div key={i}>• {h.status} ({new Date(h.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})</div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                <button 
-                  className="primary-btn" 
-                  style={{ padding: '0.4rem', fontSize: '0.75rem', flex: 1 }}
-                  onClick={() => updateOrderStatus(o.trackId, 'Enviado')}
-                  disabled={o.status === 'Enviado'}
-                >
-                  Env.
-                </button>
-                <button 
-                  className="primary-btn" 
-                  style={{ padding: '0.4rem', fontSize: '0.75rem', flex: 1 }}
-                  onClick={() => updateOrderStatus(o.trackId, 'Entregado')}
-                  disabled={o.status === 'Entregado'}
-                >
-                  Entg.
-                </button>
-              </div>
-            </div>
-          ))
-        )}
+      <div style={{ flex: 2, display: 'flex', gap: '1.5rem' }}>
+        <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', height: '100%' }}>
+          <ProductsPanel products={products} simulateAdClick={simulateAdClick} isLoading={isLoading} />
+        </div>
+        <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', height: '100%' }}>
+          <OrdersPanel orders={orders} updateOrderStatus={updateOrderStatus} />
+        </div>
       </div>
     </div>
   );
