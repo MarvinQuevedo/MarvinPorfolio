@@ -1,2 +1,6 @@
 agent-world-sim/data/simulation.log
 agent-world-sim/data/savegame.json
+ecommerce-chatbot/frontend.log
+ecommerce-chatbot/.backend.pid
+ecommerce-chatbot/.frontend.pid
+ecommerce-chatbot/backend.log
