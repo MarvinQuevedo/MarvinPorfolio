@@ -6,3 +6,4 @@ ecommerce-chatbot/.frontend.pid
 ecommerce-chatbot/backend.log
 ecommerce-chatbot/backend/chat_debug.log
 ecommerce-chatbot/backend/.venv
+ecommerce-chatbot/data.db

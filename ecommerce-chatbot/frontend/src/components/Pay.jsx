@@ -16,7 +16,9 @@ export default function Pay() {
     axios.get(`http://localhost:3001/api/orders/${trackId}`)
       .then(res => {
         setOrder(res.data);
-        if (res.data.status !== 'Pendiente de Pago') setPaid(true);
+        const pendingStatuses = ['Pending Payment', 'Pendiente de Pago'];
+        if (!pendingStatuses.includes(res.data.status)) setPaid(true);
+
         setLoading(false);
       })
       .catch(err => {
@@ -62,7 +64,7 @@ export default function Pay() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
           <CheckCircle size={48} color="#22c55e" />
-          <h3 style={{ color: '#22c55e' }}>¡Pago Exitoso!</h3>
+          <h3 style={{ color: '#22c55e' }}>Payment Successful!</h3>
           <p>You can now return to the chat.</p>
         </div>
       )}

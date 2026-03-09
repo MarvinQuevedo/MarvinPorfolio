@@ -167,12 +167,15 @@ RULES:
 1. Available Products: ${JSON.stringify(products.map(p => ({ id: p.id, name: p.name, price: p.price, image: p.image })))}
 2. FORMAT: Be EXTREMELY brief. Only show Name and Price.
 3. IMAGES: Always include the image URL when showing a product.
-4. ORDERING: To create an order, you MUST ask for: Full Name, Address, and Phone. 
+4. ORDERING: To create an order, you MUST collect: Full Name, Shipping Address, and Phone.
+   - Accept ANY address the user provides. NEVER question its format, completeness, or ask for city/state/country separately. If the user gave an address, use it as-is.
+   - If the user provides all three fields (name, address, phone) in one or multiple messages, call create_order immediately without asking for confirmation.
    - DO NOT invent data. 
    - DO NOT call create_order with empty or fake values.
 5. TRACKING: ONLY call check_status if the user explicitly gives you a TRK- code.
 6. NO TAGS: Never output <...>, [JSON], or DSML. Speak only in plain text.
 7. Language: ${language}.
+8. FOLLOW-UP: After completing any process (order created, payment link sent, or status checked), always end your message asking if you can help with anything else. If the user says no or indicates they are done, reply with a short and warm goodbye message.
 `;
 
 
@@ -330,9 +333,11 @@ app.post('/api/orders/:id/pay', async (req, res) => {
   const order = await db.getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: "Order not found" });
   
-  if (order.status !== 'Pending Payment') {
+  const PENDING_STATUSES = ['Pending Payment', 'Pendiente de Pago'];
+  if (!PENDING_STATUSES.includes(order.status)) {
     return res.status(400).json({ error: "Order already processed" });
   }
+
 
 
   // Check 5 minutes expiration
