@@ -45,3 +45,11 @@ The app will open at `http://localhost:5173`.
 5. Click the link, a new tab with the "Simulate Payment" interface will open. Click **Pay**, which will update the order status internally and return success.
 6. Close the tab and tell the bot: `"I already paid, what is my tracking code and status?"` or manually go to the route `/track/:your-code`.
 7. From the tracking page (`/track/:your-code`), you can view the information and simulate a status update (e.g., from "Paid" to "Shipped").
+
+## License
+
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license. 
+
+You are free to view, learn from, and adapt the code for personal or educational purposes, but you may **not** use it for commercial purposes. See the [LICENSE](LICENSE) file or [Creative Commons website](https://creativecommons.org/licenses/by-nc/4.0/) for more details.
+
+**Disclaimer:** The code is provided "as is" and without warranty of any kind. There is no guarantee that it works properly or is fit for any particular purpose. It is delivered solely for educational and portfolio demonstration purposes.
