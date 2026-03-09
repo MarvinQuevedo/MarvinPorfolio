@@ -117,7 +117,7 @@ class Engine {
             return `Action failed. Invalid direction.`;
         }
 
-        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && this.world[ny][nx] !== 'water' && this.world[ny][nx] !== 'wall' && this.world[ny][nx] !== 'tree' && this.world[ny][nx] !== 'rock') {
+        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && this.world[ny][nx] !== 'water' && this.world[ny][nx] !== 'wall' && this.world[ny][nx] !== 'tree' && this.world[ny][nx] !== 'rock' && this.world[ny][nx] !== 'shelter') {
             let collision = this.agents.find(a => a.x === nx && a.y === ny && a.id !== agent.id);
             if (!collision) {
                 agent.x = nx;
@@ -126,11 +126,11 @@ class Engine {
                 return `Moved to [${nx}, ${ny}]`;
             } else {
                 agent.mood = "Annoyed (bumped into someone)";
-                return `Action failed. Collision with another agent.`;
+                return `Action failed. Collision with another agent at [${nx}, ${ny}].`;
             }
         } else {
           agent.mood = "Frustrated (blocked by obstacle)";
-          return `Action failed. Cannot move to [${nx}, ${ny}] due to obstacle or boundary.`;
+          return `Action failed. Cannot move to [${nx}, ${ny}] due to obstacle or boundary. Found: ${this.world[ny] ? this.world[ny][nx] : 'Out of Bounds'}`;
         }
       } else if (actionObj.action === 'GATHER') {
         let nx = agent.x, ny = agent.y;
@@ -172,6 +172,37 @@ class Engine {
       } else if (actionObj.action === 'TALK') {
           agent.mood = "Chatty";
           return `Said: "${actionObj.message}"`;
+      } else if (actionObj.action === 'BUILD') {
+          let nx = agent.x, ny = agent.y;
+          let dir = actionObj.direction || "";
+          if (dir.includes('north') || dir.includes('UP')) ny--;
+          if (dir.includes('south') || dir.includes('DOWN')) ny++;
+          if (dir.includes('east') || dir.includes('RIGHT')) nx++;
+          if (dir.includes('west') || dir.includes('LEFT')) nx--;
+
+          if (nx === agent.x && ny === agent.y) {
+              return `Action failed. Invalid direction for building.`;
+          }
+
+          if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+              let targetCell = this.world[ny][nx];
+              if (targetCell === 'grass') {
+                  if ((agent.inventory.wood || 0) >= 2 && (agent.inventory.stone || 0) >= 1) {
+                      agent.inventory.wood -= 2;
+                      agent.inventory.stone -= 1;
+                      this.world[ny][nx] = 'shelter'; // Creates a shelter block
+                      agent.mood = "Proud (Built a shelter)";
+                      return `Built a shelter at [${nx}, ${ny}]!`;
+                  } else {
+                      agent.mood = "Sad (Not enough resources)";
+                      return `Action failed. Need 2 wood and 1 stone to build.`;
+                  }
+              } else {
+                  return `Action failed. Can only build on clear grass.`;
+              }
+          } else {
+              return `Action failed. Out of bounds.`;
+          }
       } else {
         agent.mood = "Idle";
          return `Action ${actionObj.action} not fully implemented yet or recognized.`;

@@ -4,10 +4,14 @@ const path = require('path');
 const LOG_FILE = path.join(__dirname, '..', 'data', 'simulation.log');
 
 // Toggle this to switch between Traditional AI and LLM
-let USE_TRADITIONAL_AI = true; 
+let USE_TRADITIONAL_AI = false; 
+let USE_EVOLUTIONARY_AI = false;
+let USE_COMPLEX_AI = true; // The new complex state-machine AI
 
-function setTraditionalAIToggle(val) {
-    USE_TRADITIONAL_AI = val;
+function setAIToggle(type) {
+    USE_TRADITIONAL_AI = type === 'traditional';
+    USE_EVOLUTIONARY_AI = type === 'evolutionary';
+    USE_COMPLEX_AI = type === 'complex';
 }
 
 async function askLLM(promptText) {
@@ -75,7 +79,207 @@ async function getTraditionalAgentAction(agent, sight) {
   return { action: 'MOVE', direction: revDirMap[randomCode] };
 }
 
+// --- Q-LEARNING EVOLUTIONARY ENGINE ---
+// Persistent brain between turns
+const Q_TABLE = {}; 
+const Q_ACTIONS = [
+    { action: 'MOVE', direction: 'north' }, { action: 'MOVE', direction: 'south' },
+    { action: 'MOVE', direction: 'east' }, { action: 'MOVE', direction: 'west' },
+    { action: 'MOVE', direction: 'north-east' }, { action: 'MOVE', direction: 'north-west' },
+    { action: 'MOVE', direction: 'south-east' }, { action: 'MOVE', direction: 'south-west' },
+    { action: 'GATHER', direction: 'north' }, { action: 'GATHER', direction: 'south' },
+    { action: 'GATHER', direction: 'east' }, { action: 'GATHER', direction: 'west' },
+    { action: 'GATHER', direction: 'north-east' }, { action: 'GATHER', direction: 'north-west' },
+    { action: 'GATHER', direction: 'south-east' }, { action: 'GATHER', direction: 'south-west' }
+];
+
+function getQLearningState(agent, sight) {
+    const dirMap = { 'north': 'n', 'south': 's', 'east': 'e', 'west': 'w', 'north-east': 'ne', 'north-west': 'nw', 'south-east': 'se', 'south-west': 'sw' };
+    let targetType = agent.type === 'Lumberjack' ? 'tree' : 'rock';
+    let targets = sight.filter(s => s.type === targetType);
+    
+    let tDir = 'x';
+    let tDist = 0;
+    if (targets.length > 0) {
+        let nearest = targets.sort((a,b) => a.dist - b.dist)[0];
+        tDir = dirMap[nearest.dir] || 'x';
+        tDist = nearest.dist === 1 ? 1 : 2;
+    }
+    
+    let walls = sight.filter(s => s.type === 'wall' && s.dist === 1).map(s => dirMap[s.dir]).join('');
+    
+    return `T:${tDir}${tDist}_W:${walls}`;
+}
+
+async function getEvolutionaryAgentAction(agent, sight) {
+    if (!Q_TABLE[agent.type]) Q_TABLE[agent.type] = {};
+    let qTable = Q_TABLE[agent.type];
+    
+    let currentState = getQLearningState(agent, sight);
+    if (!qTable[currentState]) qTable[currentState] = Array(Q_ACTIONS.length).fill(0);
+    
+    // 1. Calculate Reward from previous turn
+    let reward = -0.1; // base penalty for wasting time
+    if (agent.__lastInv) {
+        let targetType = agent.type === 'Lumberjack' ? 'wood' : 'stone';
+        if (agent.inventory[targetType] > agent.__lastInv[targetType]) {
+            reward = 100; // HUGE Reward for successful gathering!
+        } else if (agent.__lastPos && agent.x === agent.__lastPos.x && agent.y === agent.__lastPos.y && agent.__lastActionStr && agent.__lastActionStr.includes('MOVE')) {
+            reward = -5; // Penalty for bumping into obstacles 
+        }
+        
+        // 2. Update Q-Table (Learn!)
+        if (agent.__lastState && agent.__lastActionIdx !== undefined) {
+            if (!qTable[agent.__lastState]) {
+                qTable[agent.__lastState] = Array(Q_ACTIONS.length).fill(0);
+            }
+            let lastQ = qTable[agent.__lastState][agent.__lastActionIdx];
+            let maxCurrentQ = Math.max(...qTable[currentState]);
+            // Q-Learning Formula
+            const ALPHA = 0.2; // Learn rate
+            const GAMMA = 0.9; // Discount
+            qTable[agent.__lastState][agent.__lastActionIdx] = lastQ + ALPHA * (reward + GAMMA * maxCurrentQ - lastQ);
+        }
+    }
+    
+    // 3. Select next Action (Epsilon-Greedy approach)
+    let epsilon = agent.__epsilon !== undefined ? agent.__epsilon : 0.8; // Start with 80% random exploration
+    let actionIdx;
+    
+    if (Math.random() < epsilon) {
+        // Explore: random action
+        actionIdx = Math.floor(Math.random() * Q_ACTIONS.length);
+    } else {
+        // Exploit: use best known action for this state
+        let maxQ = Math.max(...qTable[currentState]);
+        let bestActions = qTable[currentState].map((q, i) => q === maxQ ? i : -1).filter(i => i !== -1);
+        actionIdx = bestActions[Math.floor(Math.random() * bestActions.length)];
+    }
+    
+    // Decay exploration: slowly become smarter and rely on learned table
+    agent.__epsilon = Math.max(0.05, epsilon * 0.998); // Slowing epsilon so it learns better
+    
+    // 4. Save state for next turn's reward check
+    agent.__lastState = currentState;
+    agent.__lastActionIdx = actionIdx;
+    agent.__lastActionStr = Q_ACTIONS[actionIdx].action;
+    agent.__lastInv = { wood: agent.inventory.wood || 0, stone: agent.inventory.stone || 0 };
+    agent.__lastPos = { x: agent.x, y: agent.y };
+    
+    return Q_ACTIONS[actionIdx];
+}
+// --------------------------------------
+
+// --- COMPLEX STATE-MACHINE AI ---
+async function getComplexAgentAction(agent, sight) {
+    const dirMap = { 'north': 'n', 'south': 's', 'east': 'e', 'west': 'w', 'north-east': 'ne', 'north-west': 'nw', 'south-east': 'se', 'south-west': 'sw' };
+    const revDirMap = { 'n': 'north', 's': 'south', 'e': 'east', 'w': 'west', 'ne': 'north-east', 'nw': 'north-west', 'se': 'south-east', 'sw': 'south-west' };
+
+    let allCodes = Object.values(dirMap);
+    const obstaclesAtDist1 = sight.filter(s => s.dist === 1 && ['wall', 'Agent', 'shelter', 'tree', 'rock', 'water'].includes(s.type));
+    let blockedDirs = obstaclesAtDist1.map(s => dirMap[s.dir] || s.dir);
+    
+    let clearDirs = allCodes.filter(d => !blockedDirs.includes(d));
+    if (clearDirs.length === 0) clearDirs = ['s'];
+
+    // State Management
+    if (!agent.__state) agent.__state = "gather";
+
+    // Update State based on inventory
+    let wood = agent.inventory.wood || 0;
+    let stone = agent.inventory.stone || 0;
+    
+    if (wood >= 2 && stone >= 1) {
+        agent.__state = "build"; // Ready to build shelter!
+    } else {
+        agent.__state = "gather";
+    }
+
+    // Occasional talking if another agent is near
+    let otherAgents = sight.filter(s => s.type === 'Agent');
+    if (otherAgents.length > 0 && Math.random() < 0.2) {
+        const msgs = [
+            `I have ${wood} wood and ${stone} stone!`,
+            agent.__state === 'build' ? "I'm going to build a shelter!" : "I need more materials.",
+            "Hello there, what are you doing?"
+        ];
+        return { action: 'TALK', message: msgs[Math.floor(Math.random() * msgs.length)] };
+    }
+
+    // Execution Logic
+    if (agent.__state === "build") {
+        // Build anywhere clear that is adjacent
+        let buildDir = clearDirs[Math.floor(Math.random() * clearDirs.length)];
+        return { action: 'BUILD', direction: revDirMap[buildDir] };
+    }
+
+    // Gather State
+    let targetType = "tree";
+    if (wood >= 2) targetType = "rock"; // I have wood, now I need stone
+    if (agent.type === 'Miner' && stone < 1) targetType = "rock";
+    if (agent.type === 'Miner' && stone >= 1 && wood < 2) targetType = "tree";
+
+    // Try to find the specific target we need
+    let targets = sight.filter(s => s.type === targetType);
+    if (targets.length === 0) targets = sight.filter(s => s.type === 'tree' || s.type === 'rock'); // Fallback to anything useful
+
+    if (targets.length > 0) {
+        let nearestTarget = targets.sort((a,b) => a.dist - b.dist)[0];
+        if (nearestTarget.dist === 1) {
+            return { action: 'GATHER', direction: nearestTarget.dir }; 
+        } else {
+            let tCode = dirMap[nearestTarget.dir] || nearestTarget.dir;
+            if (clearDirs.includes(tCode)) {
+                return { action: 'MOVE', direction: nearestTarget.dir }; 
+            }
+            
+            // Advanced Pathfinding: We need to move in a direction that reduces distance to target
+            // tgt.dir contains words like 'north', 'north-west' etc.
+            let goDirs = nearestTarget.dir.split('-'); // e.g. 'north-west' -> ['north', 'west']
+            
+            // Filter only the sub-directions that are actually clear!
+            let clearGoDirs = goDirs.filter(d => clearDirs.includes(dirMap[d] || d));
+            
+            if (clearGoDirs.length > 0) {
+                // Move in one of the clear directions that leads to the target
+                let chosenDir = clearGoDirs[Math.floor(Math.random() * clearGoDirs.length)];
+                return { action: 'MOVE', direction: chosenDir };
+            }
+        }
+    }
+
+    // Wander randomly to find resources, making sure we pick a TRULY clear direction
+    // AVOID ANY direction that isn't explicitly in clearDirs
+    let validClearDirs = clearDirs.filter(d => d !== 's' || clearDirs.length === 1);
+    
+    // Safety check just in case "clearDirs" was manipulated to empty
+    if (validClearDirs.length === 0) validClearDirs = ['s'];
+
+    let randomCode = validClearDirs[Math.floor(Math.random() * validClearDirs.length)];
+    return { action: 'MOVE', direction: revDirMap[randomCode] || 'south' };
+}
+// --------------------------------------
+
 async function getAgentAction(agent, sight) {
+  if (USE_COMPLEX_AI) {
+      try {
+        const ts = new Date().toISOString();
+        if (agent.__state === 'build') {
+             fs.appendFileSync(LOG_FILE, `[${ts}] [COMPLEX AI: ${agent.name}] ESTADO: ¡Intentando construir!\n`);
+        } else {
+             fs.appendFileSync(LOG_FILE, `[${ts}] [COMPLEX AI: ${agent.name}] ESTADO: Recolectando (${agent.inventory.wood||0}W, ${agent.inventory.stone||0}S)\n`);
+        }
+      } catch(e) {}
+      return await getComplexAgentAction(agent, sight);
+  }
+
+  if (USE_EVOLUTIONARY_AI) {
+      try {
+        const ts = new Date().toISOString();
+        fs.appendFileSync(LOG_FILE, `[${ts}] [EVOLUCION Q-LEARNING: ${agent.name}] Aprendiendo... Epsilon(Tasa de exploración): ${(agent.__epsilon||0.8).toFixed(3)}\n`);
+      } catch(e) {}
+      return await getEvolutionaryAgentAction(agent, sight);
+  }
   if (USE_TRADITIONAL_AI) {
       try {
         const ts = new Date().toISOString();
@@ -155,4 +359,4 @@ Ex: M ${clearDirs[0]}`;
   return { action: act, direction: dir };
 }
 
-module.exports = { getAgentAction, setTraditionalAIToggle };
+module.exports = { getAgentAction, setAIToggle };

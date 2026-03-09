@@ -29,7 +29,7 @@ const emitter = new EventEmitter();
 const engine = new Engine(emitter);
 let autoPlayInterval = null;
 let isProcessingTurn = false;
-let currentTickDelayMs = 2000; // Target baseline
+let currentTickDelayMs = 50; // Target baseline
 let tickMetrics = {
     lastTickDuration: 0,
     averageDuration: 0,
@@ -136,9 +136,9 @@ async function runTick(emitter) {
   tickMetrics.lastTickDuration = duration;
 
   // Adaptive throttling logic
-  // If LLM processes faster than our delay, we could speed up (min 500ms)
+  // If LLM processes faster than our delay, we could speed up (min 50ms)
   // If LLM processes slower, we must slow our delay to match the load + buffer
-  currentTickDelayMs = Math.max(500, Math.floor(tickMetrics.averageDuration * 1.2)); 
+  currentTickDelayMs = Math.max(50, Math.floor(tickMetrics.averageDuration * 1.2)); 
   
   emitter.emit('perfUpdate', {
       durationMs: duration,
