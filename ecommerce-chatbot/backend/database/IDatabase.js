@@ -6,6 +6,8 @@ class IDatabase {
     // Product Methods
     async getAllProducts() { throw new Error('Method not implemented'); }
     async getProductById(id) { throw new Error('Method not implemented'); }
+    async searchProducts(query, limit, offset) { throw new Error('Method not implemented'); }
+    async getProductCount(query) { throw new Error('Method not implemented'); }
     async updateProductInventory(id, delta) { throw new Error('Method not implemented'); }
 
     // Order Methods

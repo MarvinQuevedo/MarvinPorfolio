@@ -56,6 +56,35 @@ class SQLiteDatabase extends IDatabase {
         return stmt.get(id);
     }
 
+    async searchProducts(query = '', limit = 10, offset = 0) {
+        if (!query || query.trim() === '') {
+            // No query: return paginated list
+            const stmt = this.db.prepare('SELECT * FROM products LIMIT ? OFFSET ?');
+            return stmt.all(limit, offset);
+        }
+        // Split query into individual keywords so multi-word searches also work
+        const keywords = query.trim().split(/\s+/);
+        // Build: (name LIKE ? OR description LIKE ?) AND (name LIKE ? OR description LIKE ?) ...
+        const conditions = keywords.map(() => '(name LIKE ? OR description LIKE ?)').join(' AND ');
+        const params = keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`]);
+        const stmt = this.db.prepare(
+            `SELECT * FROM products WHERE ${conditions} LIMIT ? OFFSET ?`
+        );
+        return stmt.all(...params, limit, offset);
+    }
+
+    async getProductCount(query = '') {
+        if (!query || query.trim() === '') {
+            const stmt = this.db.prepare('SELECT COUNT(*) as count FROM products');
+            return stmt.get().count;
+        }
+        const keywords = query.trim().split(/\s+/);
+        const conditions = keywords.map(() => '(name LIKE ? OR description LIKE ?)').join(' AND ');
+        const params = keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`]);
+        const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM products WHERE ${conditions}`);
+        return stmt.get(...params).count;
+    }
+
     async updateProductInventory(id, delta) {
         const stmt = this.db.prepare('UPDATE products SET inventory = inventory + ? WHERE id = ?');
         return stmt.run(delta, id);

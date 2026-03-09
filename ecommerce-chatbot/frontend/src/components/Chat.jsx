@@ -71,7 +71,7 @@ export default function Chat() {
     if (language) {
       const fetchData = () => {
         axios.get('http://localhost:3001/api/products')
-          .then(res => setProducts(res.data))
+          .then(res => setProducts(res.data.products ?? res.data))
           .catch(console.log);
 
         axios.get('http://localhost:3001/api/orders')
