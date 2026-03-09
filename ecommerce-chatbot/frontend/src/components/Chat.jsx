@@ -3,8 +3,9 @@ import axios from 'axios';
 import { Send, Bot, User, Cpu } from 'lucide-react';
 
 const renderText = (text) => {
-  // Very basic markdown parsing for Links, URLs and Bold
+  // Very basic markdown parsing for Links, URLs, Bold and Images
   const parts = [];
+  // Regex includes groups for markdown links, raw urls, and bold text
   const regex = /\[([^\]]+)\]\(([^)]+)\)|(http[s]?:\/\/[^\s]+)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
   let lastIndex = 0;
   let match;
@@ -15,21 +16,31 @@ const renderText = (text) => {
     }
     
     if (match[1] && match[2]) {
-      // It's a markdown link [text](url)
+      // Markdown link [text](url)
       parts.push(
         <a key={match.index} href={match[2]} target="_blank" rel="noopener noreferrer">
           {match[1]}
         </a>
       );
     } else if (match[3]) {
-      // It's a raw URL http://...
-      parts.push(
-        <a key={match.index} href={match[3]} target="_blank" rel="noopener noreferrer">
-          {match[3]}
-        </a>
-      );
+      const url = match[3];
+      // Check if URL is an image
+      if (url.match(/\.(jpeg|jpg|gif|png|webp|svg)(\?.*)?$/i)) {
+        parts.push(
+          <div key={match.index} style={{ margin: '0.5rem 0' }}>
+            <img src={url} alt="Content" style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }} />
+          </div>
+        );
+      } else {
+        // Raw URL
+        parts.push(
+          <a key={match.index} href={url} target="_blank" rel="noopener noreferrer">
+            {url}
+          </a>
+        );
+      }
     } else if (match[4] || match[5]) {
-      // It's bold text **Text** or *Text*
+      // Bold text **Text** or *Text*
       parts.push(
         <strong key={match.index} style={{ color: 'var(--primary)' }}>
           {match[4] || match[5]}
@@ -80,9 +91,9 @@ export default function Chat() {
     const checkPayment = async () => {
       try {
         const { data } = await axios.get(`http://localhost:3001/api/orders/${pendingOrderId}`);
-        if (data.status === 'Paid / Processing') {
+        if (data.status === 'Pagado / En Proceso') {
           // Tell the AI to confirm the payment natively
-          handleSend(`(SYSTEM: The order ${pendingOrderId} has been PAID successfully. Please reply with EXACTLY this sentence: "Tu pedido **${pendingOrderId}** está **Pagado / En Proceso**." and add a short, friendly thank you message below it.)`, true);
+          handleSend(`(SYSTEM: La orden ${pendingOrderId} ha sido PAGADA exitosamente. Por favor responde exactamente con esta frase: "Tu pedido **${pendingOrderId}** está **Pagado / En Proceso**." y añade un breve agradecimiento debajo.)`, true);
           setPendingOrderId(null); // Stop polling
         }
       } catch (e) {}
@@ -200,7 +211,7 @@ export default function Chat() {
         <div className="chat-header">
           <h1><Cpu size={24} color="var(--primary)" /> Store AI Agent</h1>
           <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Powered by Ollama
+            Powered by AI Agent
           </div>
         </div>
 
@@ -288,11 +299,21 @@ export default function Chat() {
             <div key={o.trackId} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{o.trackId}</span>
-                <span style={{ fontSize: '0.8rem', color: o.status === 'Pending Payment' ? 'orange' : 'var(--primary)' }}>
+                <span style={{ fontSize: '0.8rem', color: o.status === 'Pendiente de Pago' ? 'orange' : 'var(--primary)' }}>
                   {o.status}
                 </span>
               </div>
-              <span style={{ fontSize: '0.85rem' }}>{o.name} - ${o.amount}</span>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {new Date(o.createdAt).toLocaleString()}
+              </div>
+              <span style={{ fontSize: '0.85rem' }}>{o.name} - <b>{o.productName}</b> (${o.amount})</span>
+              
+              <div style={{ background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '6px', fontSize: '0.7rem' }}>
+                <strong>Historial:</strong>
+                {o.history && o.history.map((h, i) => (
+                  <div key={i}>• {h.status} ({new Date(h.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})</div>
+                ))}
+              </div>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                 <button 
                   className="primary-btn" 

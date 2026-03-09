@@ -43,14 +43,14 @@ const tools = [
     type: 'function',
     function: {
       name: 'create_order',
-      description: 'Create an order and generate a payment link. Call this only when the user explicitly wants to buy and has provided their name, address, and phone.',
+      description: 'Generate a payment link. ONLY call this after the user has explicitly provided their full name, shipping address, and phone number.',
       parameters: {
         type: 'object',
         properties: {
           product_id: { type: 'string', description: 'The ID of the product' },
-          client_name: { type: 'string', description: 'The full name of the client' },
-          client_address: { type: 'string', description: 'The delivery address' },
-          client_phone: { type: 'string', description: 'The phone number' },
+          client_name: { type: 'string', description: 'The actual full name provided by the user' },
+          client_address: { type: 'string', description: 'The actual delivery address provided by the user' },
+          client_phone: { type: 'string', description: 'The actual phone number provided by the user' },
         },
         required: ['product_id', 'client_name', 'client_address', 'client_phone'],
       },
@@ -60,11 +60,11 @@ const tools = [
     type: 'function',
     function: {
       name: 'check_status',
-      description: 'Check the status of an order using its tracking code',
+      description: 'Check the status of an existing order. ONLY call this if the user provides a tracking code starting with TRK-.',
       parameters: {
         type: 'object',
         properties: {
-          track_id: { type: 'string', description: 'The tracking code of the order' },
+          track_id: { type: 'string', description: 'The tracking code (e.g., TRK-XXXX)' },
         },
         required: ['track_id'],
       },
@@ -107,7 +107,7 @@ function handleToolCall(name, args) {
     }
 
     if (product.inventory <= 0) {
-      return JSON.stringify({ error: "Product out of stock" });
+      return JSON.stringify({ error: "Producto agotado" });
     }
 
     const tId = 'TRK-' + crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -119,11 +119,11 @@ function handleToolCall(name, args) {
       name: sanitize(client_name),
       address: sanitize(client_address),
       phone: sanitize(client_phone),
-      status: 'Pending Payment',
+      status: 'Pendiente de Pago',
       amount: product.price,
       createdAt: Date.now(),
       history: [
-        { status: 'Pending Payment', timestamp: Date.now() }
+        { status: 'Pendiente de Pago', timestamp: Date.now() }
       ]
     };
 
@@ -154,21 +154,17 @@ function handleToolCall(name, args) {
 }
 
 const getSystemPrompt = (language = "Spanish") => `
-You are a sales assistant for an electronics store.
-CRITICAL RULES:
-1. NEVER invent products. Available products:
-${JSON.stringify(products, null, 2)}
-2. BE EXTREMELY CONCISE. When presenting a product, ONLY show its Name and Price. DO NOT write long paragraphs.
-3. If the user comes from an ad, check if inventory > 0 internally. If 0, politely say it's out of stock.
-4. DO NOT mention stock numbers or how the inventory works.
-5. To sell a product, you MUST collect: Full Name, Delivery Address, Phone Number.
-   WARNING: DO NOT call the \`create_order\` tool with empty fields. Make sure the user has provided their real name, address, and phone before generating the link.
-6. NEVER output raw JSON (like [{"name":"create_order"}...]) in the chat text. ALWAYS use the actual tool calling framework.
-7. ONCE YOU HAVE ALL 3 PIECES OF CONCTACT INFO, call the \`create_order\` TOOL natively. Stop chatting and trigger the tool.
-8. When the \`create_order\` tool returns the URL, present it clearly to the user.
-9. Tell the user the payment link is only valid for 5 minutos.
-10. Users can check their order status by providing a tracking code. Use the \`check_status\` tool.
-11. Speak in ${language} and be EXTREMELY brief.
+You are a sales assistant. 
+RULES:
+1. Available Products: ${JSON.stringify(products.map(p => ({ id: p.id, name: p.name, price: p.price, image: p.image })))}
+2. FORMAT: Be EXTREMELY brief. Only show Name and Price.
+3. IMAGES: Always include the image URL when showing a product.
+4. ORDERING: To create an order, you MUST ask for: Full Name, Address, and Phone. 
+   - DO NOT invent data. 
+   - DO NOT call create_order with empty or fake values.
+5. TRACKING: ONLY call check_status if the user explicitly gives you a TRK- code.
+6. NO TAGS: Never output <...>, [JSON], or DSML. Speak only in plain text.
+7. Language: ${language}.
 `;
 
 app.post('/api/chat', async (req, res) => {
@@ -272,7 +268,14 @@ app.post('/api/chat', async (req, res) => {
       logMessage(`Final AI Content Appended: ${messageObj.content}`);
     }
 
-    res.json({ message: { role: messageObj.role || 'assistant', content: messageObj.content } });
+    // DeepSeek v3/R1 sometimes leaks internal DSML tokens or thought tags into content
+    let finalContent = messageObj.content || "";
+    finalContent = finalContent
+      .replace(/<\|DSML\|[\s\S]*?<\/\|DSML\|>/gi, "")
+      .replace(/<[\s\S]*?>/gi, "")
+      .trim();
+
+    res.json({ message: { role: messageObj.role || 'assistant', content: finalContent } });
   } catch (error) {
     logMessage(`ERROR: ${error.message}`);
     res.status(500).json({ error: "Error en la IA. " + error.message });
@@ -308,27 +311,28 @@ app.post('/api/orders/:id/pay', (req, res) => {
   const order = orders[req.params.id];
   if (!order) return res.status(404).json({ error: "Order not found" });
   
-  if (order.status !== 'Pending Payment') {
-    return res.status(400).json({ error: "Order already processed" });
+  if (order.status !== 'Pendiente de Pago') {
+    return res.status(400).json({ error: "Pedido ya procesado" });
   }
 
   // Check 5 minutes expiration
   const elapsed = Date.now() - order.createdAt;
   if (elapsed > 5 * 60 * 1000) {
-    order.status = 'Expired';
-    return res.status(400).json({ error: "Link expired. Please request a new one." });
+    order.status = 'Expirado';
+    return res.status(400).json({ error: "Link expirado. Por favor solicita uno nuevo." });
   }
   
   const product = products.find(p => p.id === order.productId);
   if (!product || product.inventory <= 0) {
-    order.status = 'Out of Stock - Cancelled';
-    return res.status(400).json({ error: "Product is no longer available in inventory" });
+    order.status = 'Sin Stock - Cancelado';
+    return res.status(400).json({ error: "Producto ya no disponible" });
   }
   
   // Deduct inventory
   product.inventory -= 1;
-  order.status = 'Paid / Processing';
-  res.json({ success: true, message: "Payment successful. Inventory deducted." });
+  order.status = 'Pagado / En Proceso';
+  order.history.push({ status: 'Pagado / En Proceso', timestamp: Date.now() });
+  res.json({ success: true, message: "Pago exitoso. Inventario descontado." });
 });
 
 // Endpoint to update tracking
@@ -339,6 +343,7 @@ app.post('/api/orders/:id/update-status', (req, res) => {
     if (!status) return res.status(400).json({ error: "Status required" });
     
     order.status = sanitize(status);
+    order.history.push({ status: order.status, timestamp: Date.now() });
     res.json({ success: true, message: "Status updated", order });
 });
 

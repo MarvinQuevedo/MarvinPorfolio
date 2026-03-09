@@ -80,7 +80,7 @@ export default function Track() {
           <div style={{ marginTop: '2rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Simulate Status Update:</p>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {['Shipped', 'Out for delivery', 'Delivered'].map(s => (
+              {['Enviado', 'En camino', 'Entregado'].map(s => (
                 <button 
                   key={s}
                   onClick={() => simulateUpdate(s)}
