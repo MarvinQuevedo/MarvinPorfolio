@@ -1,0 +1,11 @@
+# Project Rules & Instructions
+
+## Communication Language
+- **ALWAYS** respond in English.
+- All technical documentation, file names, variables, and comments within the code must be in **English**.
+- Even if the user provides prompts in Spanish, the AI must communicate and generate outputs exclusively in English.
+- If you need to translate existing Spanish documentation or code comments, do so proactively.
+
+## Database Guidelines
+- Use the `IDatabase` interface for any database interaction.
+- The default provider is SQLite; follow the existing patterns in `backend/database/`.

@@ -7,9 +7,11 @@ require('dotenv').config();
 const fs = require('fs');
 const crypto = require('crypto');
 
-const products = require('./products');
+const db = require('./database');
 
-// Configuración de Logging
+
+// Logging Configuration
+
 const logStream = fs.createWriteStream(__dirname + '/chat_debug.log', {flags:'a'});
 function logMessage(msg) {
   const timestamp = new Date().toISOString();
@@ -21,9 +23,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory DB
-const orders = {}; 
-// e.g. trackId: { trackId, productId, name, address, phone, status: 'Pending Payment', total: 699 }
+// Database is handled via db module
+
 
 const AI_PROVIDER = process.env.AI_PROVIDER || 'deepseek';
 
@@ -92,7 +93,7 @@ function sanitize(input) {
   return input.toString().replace(/<[^>]*>?/gm, ''); // basic XSS prevention
 }
 
-function handleToolCall(name, args) {
+async function handleToolCall(name, args) {
   if (name === 'create_order') {
     const { product_id, client_name, client_address, client_phone } = args;
     
@@ -101,31 +102,35 @@ function handleToolCall(name, args) {
       return JSON.stringify({ error: "Missing required fields" });
     }
     
-    const product = products.find(p => p.id === product_id);
+    const product = await db.getProductById(product_id);
     if (!product) {
       return JSON.stringify({ error: "Product not found" });
     }
 
     if (product.inventory <= 0) {
-      return JSON.stringify({ error: "Producto agotado" });
+      return JSON.stringify({ error: "Product out of stock" });
     }
+
 
     const tId = 'TRK-' + crypto.randomBytes(4).toString('hex').toUpperCase();
     
-    orders[tId] = {
+    const orderData = {
       trackId: tId,
       productId: product_id,
       productName: product.name,
       name: sanitize(client_name),
       address: sanitize(client_address),
       phone: sanitize(client_phone),
-      status: 'Pendiente de Pago',
+      status: 'Pending Payment',
       amount: product.price,
       createdAt: Date.now(),
       history: [
-        { status: 'Pendiente de Pago', timestamp: Date.now() }
+        { status: 'Pending Payment', timestamp: Date.now() }
       ]
+
     };
+
+    await db.createOrder(orderData);
 
     const paymentLink = `http://localhost:5173/pay/${tId}`; // Point to frontend pay page
     
@@ -138,22 +143,25 @@ function handleToolCall(name, args) {
   }
   if (name === 'check_status') {
     const { track_id } = args;
-    const order = orders[track_id];
+    const order = await db.getOrderById(track_id);
     if (!order) return JSON.stringify({ error: "Order not found" });
     return JSON.stringify({ success: true, status: order.status, order_details: order });
   }
   if (name === 'update_status') {
     const { track_id, new_status } = args;
-    const order = orders[track_id];
+    const order = await db.getOrderById(track_id);
     if (!order) return JSON.stringify({ error: "Order not found" });
-    order.status = sanitize(new_status);
-    order.history.push({ status: order.status, timestamp: Date.now() });
-    return JSON.stringify({ success: true, new_status: order.status, message: "Status updated" });
+    
+    const status = sanitize(new_status);
+    await db.updateOrderStatus(track_id, status, { status: status, timestamp: Date.now() });
+    
+    return JSON.stringify({ success: true, new_status: status, message: "Status updated" });
   }
   return JSON.stringify({ error: "Function not found" });
 }
 
-const getSystemPrompt = (language = "Spanish") => `
+
+const getSystemPrompt = (products, language = "English") => `
 You are a sales assistant. 
 RULES:
 1. Available Products: ${JSON.stringify(products.map(p => ({ id: p.id, name: p.name, price: p.price, image: p.image })))}
@@ -167,6 +175,8 @@ RULES:
 7. Language: ${language}.
 `;
 
+
+
 app.post('/api/chat', async (req, res) => {
   const { messages, language } = req.body;
   if (!messages) return res.status(400).json({ error: "messages array required" });
@@ -176,18 +186,21 @@ app.post('/api/chat', async (req, res) => {
       // Check if Ollama is running
       await fetch('http://127.0.0.1:11434/', { method: 'GET' });
     } catch(e) {
-      return res.status(500).json({ error: "Ollama no está corriendo. Por favor inicia Ollama localmente." });
+      return res.status(500).json({ error: "Ollama is not running. Please start Ollama locally." });
     }
+
   }
 
   try {
     // Optimization: Only keep the last 8 messages to save tokens and prevent context loss
     const recentMessages = messages.slice(-8);
     
+    const allProducts = await db.getAllProducts();
     const currentMessages = [
-      { role: 'system', content: getSystemPrompt(language) },
+      { role: 'system', content: getSystemPrompt(allProducts, language) },
       ...recentMessages
     ];
+
 
     let messageObj;
 
@@ -232,7 +245,8 @@ app.post('/api/chat', async (req, res) => {
         logMessage(`-> Calling Tool: ${functionName}`);
         logMessage(`-> Tool Args: ${AI_PROVIDER === 'deepseek' ? toolCall.function.arguments : JSON.stringify(functionArgs)}`);
         
-        const toolResult = handleToolCall(functionName, functionArgs);
+        const toolResult = await handleToolCall(functionName, functionArgs);
+
         logMessage(`<- Tool Result: ${toolResult}`);
         
         if (AI_PROVIDER === 'deepseek') {
@@ -278,74 +292,89 @@ app.post('/api/chat', async (req, res) => {
     res.json({ message: { role: messageObj.role || 'assistant', content: finalContent } });
   } catch (error) {
     logMessage(`ERROR: ${error.message}`);
-    res.status(500).json({ error: "Error en la IA. " + error.message });
+    res.status(500).json({ error: "AI Error. " + error.message });
   }
+
 });
 
-app.get('/api/orders/:id', (req, res) => {
-  const order = orders[req.params.id];
+app.get('/api/orders/:id', async (req, res) => {
+  const order = await db.getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: "Order not found" });
   res.json(order);
 });
 
 // Admin Endpoint: Get all orders
-app.get('/api/orders', (req, res) => {
-  res.json(Object.values(orders));
+app.get('/api/orders', async (req, res) => {
+  const orders = await db.getAllOrders();
+  res.json(orders);
 });
 
 // Admin Endpoint: Update order status directly
-app.put('/api/orders/:id/status', (req, res) => {
-  const order = orders[req.params.id];
+app.put('/api/orders/:id/status', async (req, res) => {
+  const { status } = req.body;
+  const order = await db.getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: "Order not found" });
-  order.status = req.body.status;
-  order.history.push({ status: order.status, timestamp: Date.now() });
-  res.json({ success: true, order });
+  
+  await db.updateOrderStatus(req.params.id, status, { status: status, timestamp: Date.now() });
+  const updatedOrder = await db.getOrderById(req.params.id);
+  res.json({ success: true, order: updatedOrder });
 });
 
-app.get('/api/products', (req, res) => {
+app.get('/api/products', async (req, res) => {
+  const products = await db.getAllProducts();
   res.json(products);
 });
 
 // Endpoint to simulate payment
-app.post('/api/orders/:id/pay', (req, res) => {
-  const order = orders[req.params.id];
+app.post('/api/orders/:id/pay', async (req, res) => {
+  const order = await db.getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: "Order not found" });
   
-  if (order.status !== 'Pendiente de Pago') {
-    return res.status(400).json({ error: "Pedido ya procesado" });
+  if (order.status !== 'Pending Payment') {
+    return res.status(400).json({ error: "Order already processed" });
   }
+
 
   // Check 5 minutes expiration
   const elapsed = Date.now() - order.createdAt;
   if (elapsed > 5 * 60 * 1000) {
-    order.status = 'Expirado';
-    return res.status(400).json({ error: "Link expirado. Por favor solicita uno nuevo." });
+    const status = 'Expired';
+    await db.updateOrderStatus(req.params.id, status, { status: status, timestamp: Date.now() });
+    return res.status(400).json({ error: "Link expired. Please request a new one." });
   }
+
   
-  const product = products.find(p => p.id === order.productId);
+  const product = await db.getProductById(order.productId);
   if (!product || product.inventory <= 0) {
-    order.status = 'Sin Stock - Cancelado';
-    return res.status(400).json({ error: "Producto ya no disponible" });
+    const status = 'Out of Stock - Cancelled';
+    await db.updateOrderStatus(req.params.id, status, { status: status, timestamp: Date.now() });
+    return res.status(400).json({ error: "Product no longer available" });
   }
+
   
   // Deduct inventory
-  product.inventory -= 1;
-  order.status = 'Pagado / En Proceso';
-  order.history.push({ status: 'Pagado / En Proceso', timestamp: Date.now() });
-  res.json({ success: true, message: "Pago exitoso. Inventario descontado." });
+  await db.updateProductInventory(order.productId, -1);
+  const finalStatus = 'Paid / Processing';
+  await db.updateOrderStatus(req.params.id, finalStatus, { status: finalStatus, timestamp: Date.now() });
+  
+  res.json({ success: true, message: "Payment successful. Inventory updated." });
+
 });
 
 // Endpoint to update tracking
-app.post('/api/orders/:id/update-status', (req, res) => {
+app.post('/api/orders/:id/update-status', async (req, res) => {
     const { status } = req.body;
-    const order = orders[req.params.id];
+    const order = await db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (!status) return res.status(400).json({ error: "Status required" });
     
-    order.status = sanitize(status);
-    order.history.push({ status: order.status, timestamp: Date.now() });
-    res.json({ success: true, message: "Status updated", order });
+    const sanitizedStatus = sanitize(status);
+    await db.updateOrderStatus(req.params.id, sanitizedStatus, { status: sanitizedStatus, timestamp: Date.now() });
+    
+    const updatedOrder = await db.getOrderById(req.params.id);
+    res.json({ success: true, message: "Status updated", order: updatedOrder });
 });
+
 
 app.listen(3001, () => {
   console.log("Backend runs on http://localhost:3001");
