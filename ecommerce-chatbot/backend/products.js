@@ -4,6 +4,7 @@ module.exports = [
     name: "Smartphone X",
     description: "The latest smartphone with amazing features.",
     price: 699,
+    inventory: 2,
     image: "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?q=80&w=2080&auto=format&fit=crop"
   },
   {
@@ -11,6 +12,7 @@ module.exports = [
     name: "Wireless Headphones",
     description: "Noise cancelling wireless headphones.",
     price: 199,
+    inventory: 1,
     image: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?q=80&w=2065&auto=format&fit=crop"
   },
   {
@@ -18,6 +20,7 @@ module.exports = [
     name: "Smart Watch",
     description: "Track your fitness and receive notifications.",
     price: 249,
+    inventory: 5,
     image: "https://images.unsplash.com/photo-1546868871-7041f2a55e12?q=80&w=1964&auto=format&fit=crop"
   }
 ];
