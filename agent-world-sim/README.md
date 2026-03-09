@@ -1,5 +1,8 @@
 # Agent World Sim (Multi-Agent World Simulation)
 
+> [!WARNING]
+> This project is an experiment and currently does not work correctly.
+
 ## 📌 Overview
 This project is a simulation where multiple AI-driven agents (powered by Ollama or lightweight local models) coexist, interact, and have the ability to modify, expand, and improve their environment. The simulation is based on strict, simple rules that govern the physical and logical boundaries of the world to ensure that interactions make sense and remain coherent.
 
