@@ -115,12 +115,16 @@ function handleToolCall(name, args) {
     orders[tId] = {
       trackId: tId,
       productId: product_id,
+      productName: product.name,
       name: sanitize(client_name),
       address: sanitize(client_address),
       phone: sanitize(client_phone),
       status: 'Pending Payment',
       amount: product.price,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      history: [
+        { status: 'Pending Payment', timestamp: Date.now() }
+      ]
     };
 
     const paymentLink = `http://localhost:5173/pay/${tId}`; // Point to frontend pay page
@@ -143,6 +147,7 @@ function handleToolCall(name, args) {
     const order = orders[track_id];
     if (!order) return JSON.stringify({ error: "Order not found" });
     order.status = sanitize(new_status);
+    order.history.push({ status: order.status, timestamp: Date.now() });
     return JSON.stringify({ success: true, new_status: order.status, message: "Status updated" });
   }
   return JSON.stringify({ error: "Function not found" });
@@ -278,6 +283,20 @@ app.get('/api/orders/:id', (req, res) => {
   const order = orders[req.params.id];
   if (!order) return res.status(404).json({ error: "Order not found" });
   res.json(order);
+});
+
+// Admin Endpoint: Get all orders
+app.get('/api/orders', (req, res) => {
+  res.json(Object.values(orders));
+});
+
+// Admin Endpoint: Update order status directly
+app.put('/api/orders/:id/status', (req, res) => {
+  const order = orders[req.params.id];
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  order.status = req.body.status;
+  order.history.push({ status: order.status, timestamp: Date.now() });
+  res.json({ success: true, order });
 });
 
 app.get('/api/products', (req, res) => {

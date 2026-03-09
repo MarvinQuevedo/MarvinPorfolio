@@ -3,9 +3,9 @@ import axios from 'axios';
 import { Send, Bot, User, Cpu } from 'lucide-react';
 
 const renderText = (text) => {
-  // Very basic markdown link parsing [Text](url)
+  // Very basic markdown parsing for Links, URLs and Bold
   const parts = [];
-  const regex = /\[([^\]]+)\]\(([^)]+)\)|(http[s]?:\/\/[^\s]+)/g;
+  const regex = /\[([^\]]+)\]\(([^)]+)\)|(http[s]?:\/\/[^\s]+)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
   let lastIndex = 0;
   let match;
 
@@ -15,18 +15,25 @@ const renderText = (text) => {
     }
     
     if (match[1] && match[2]) {
-      // It's a markdown link
+      // It's a markdown link [text](url)
       parts.push(
         <a key={match.index} href={match[2]} target="_blank" rel="noopener noreferrer">
           {match[1]}
         </a>
       );
     } else if (match[3]) {
-      // It's a raw URL
+      // It's a raw URL http://...
       parts.push(
         <a key={match.index} href={match[3]} target="_blank" rel="noopener noreferrer">
           {match[3]}
         </a>
+      );
+    } else if (match[4] || match[5]) {
+      // It's bold text **Text** or *Text*
+      parts.push(
+        <strong key={match.index} style={{ color: 'var(--primary)' }}>
+          {match[4] || match[5]}
+        </strong>
       );
     }
     lastIndex = regex.lastIndex;
@@ -45,18 +52,23 @@ export default function Chat() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [pendingOrderId, setPendingOrderId] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
     if (language) {
-      const fetchProducts = () => {
+      const fetchData = () => {
         axios.get('http://localhost:3001/api/products')
           .then(res => setProducts(res.data))
           .catch(console.log);
+
+        axios.get('http://localhost:3001/api/orders')
+          .then(res => setOrders(res.data))
+          .catch(console.log);
       };
-      fetchProducts();
-      const interval = setInterval(fetchProducts, 3000);
+      fetchData();
+      const interval = setInterval(fetchData, 3000);
       return () => clearInterval(interval);
     }
   }, [language]);
@@ -153,6 +165,17 @@ export default function Chat() {
   const simulateAdClick = (product) => {
     const msgMsg = `Hola, vengo de Facebook, vi un anuncio sobre el producto "${product.name}" y me interesa comprarlo. ¿Aún tienen disponibilidad?`;
     handleSend(msgMsg);
+  };
+
+  const updateOrderStatus = async (trackId, newStatus) => {
+    try {
+      await axios.put(`http://localhost:3001/api/orders/${trackId}/status`, { status: newStatus });
+      // Refresh orders right away
+      const { data } = await axios.get('http://localhost:3001/api/orders');
+      setOrders(data);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   if (!language) {
@@ -254,6 +277,43 @@ export default function Chat() {
             </button>
           </div>
         ))}
+        
+        <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginTop: '1rem' }}>📦 Admin Dashboard</h3>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Lista de pedidos y cambio de estados.</p>
+        
+        {orders.length === 0 ? (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No hay pedidos todavía.</p>
+        ) : (
+          orders.map(o => (
+            <div key={o.trackId} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{o.trackId}</span>
+                <span style={{ fontSize: '0.8rem', color: o.status === 'Pending Payment' ? 'orange' : 'var(--primary)' }}>
+                  {o.status}
+                </span>
+              </div>
+              <span style={{ fontSize: '0.85rem' }}>{o.name} - ${o.amount}</span>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                <button 
+                  className="primary-btn" 
+                  style={{ padding: '0.4rem', fontSize: '0.75rem', flex: 1 }}
+                  onClick={() => updateOrderStatus(o.trackId, 'Enviado')}
+                  disabled={o.status === 'Enviado'}
+                >
+                  Env.
+                </button>
+                <button 
+                  className="primary-btn" 
+                  style={{ padding: '0.4rem', fontSize: '0.75rem', flex: 1 }}
+                  onClick={() => updateOrderStatus(o.trackId, 'Entregado')}
+                  disabled={o.status === 'Entregado'}
+                >
+                  Entg.
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
