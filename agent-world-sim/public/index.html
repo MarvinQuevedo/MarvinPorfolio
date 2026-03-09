@@ -185,17 +185,21 @@
             </div>
             
             <div class="status-panel">
-                <h3>Vitals & Inventory</h3>
+                <h3>Vitals & Personality</h3>
                 <div style="display:flex; justify-content:space-between; font-size: 13px;">
                     <div style="background: #2a1111; padding: 10px; border-radius: 5px; flex: 1; margin-right:5px;">
                         <span style="color:var(--agent1)">Agent 1 (Lumberjack)</span><br>
                         Wood: <span id="inv-a1-wood" style="font-weight:bold;">0</span> | 
-                        Stone: <span id="inv-a1-stone" style="font-weight:bold;">0</span>
+                        Stone: <span id="inv-a1-stone" style="font-weight:bold;">0</span><br>
+                        Mood: <i id="mood-a1" style="color:#aaa;">Neutral</i><br>
+                        <span style="font-size: 10px; color:#777;">Traits: <span id="traits-a1">...</span></span>
                     </div>
                     <div style="background: #11112a; padding: 10px; border-radius: 5px; flex: 1; margin-left:5px;">
                         <span style="color:var(--agent2)">Agent 2 (Miner)</span><br>
                         Wood: <span id="inv-a2-wood" style="font-weight:bold;">0</span> | 
-                        Stone: <span id="inv-a2-stone" style="font-weight:bold;">0</span>
+                        Stone: <span id="inv-a2-stone" style="font-weight:bold;">0</span><br>
+                        Mood: <i id="mood-a2" style="color:#aaa;">Neutral</i><br>
+                        <span style="font-size: 10px; color:#777;">Traits: <span id="traits-a2">...</span></span>
                     </div>
                 </div>
             </div>
@@ -238,6 +242,12 @@
         const invA2Wood = document.getElementById('inv-a2-wood');
         const invA2Stone = document.getElementById('inv-a2-stone');
 
+        // Personality DOM
+        const moodA1 = document.getElementById('mood-a1');
+        const traitsA1 = document.getElementById('traits-a1');
+        const moodA2 = document.getElementById('mood-a2');
+        const traitsA2 = document.getElementById('traits-a2');
+
         let GRID_SIZE = 10;
 
         function renderWorld(state) {
@@ -248,13 +258,21 @@
             // Update Inventory Visuals
             let agent1 = agents.find(a => a.id === 1);
             let agent2 = agents.find(a => a.id === 2);
-            if (agent1 && agent1.inventory) {
-                invA1Wood.innerText = agent1.inventory.wood || 0;
-                invA1Stone.innerText = agent1.inventory.stone || 0;
+            if (agent1) {
+                if (agent1.inventory) {
+                    invA1Wood.innerText = agent1.inventory.wood || 0;
+                    invA1Stone.innerText = agent1.inventory.stone || 0;
+                }
+                moodA1.innerText = agent1.mood || "Idle";
+                traitsA1.innerText = agent1.traits || "";
             }
-            if (agent2 && agent2.inventory) {
-                invA2Wood.innerText = agent2.inventory.wood || 0;
-                invA2Stone.innerText = agent2.inventory.stone || 0;
+            if (agent2) {
+                if (agent2.inventory) {
+                    invA2Wood.innerText = agent2.inventory.wood || 0;
+                    invA2Stone.innerText = agent2.inventory.stone || 0;
+                }
+                moodA2.innerText = agent2.mood || "Idle";
+                traitsA2.innerText = agent2.traits || "";
             }
 
             gridEl.style.gridTemplateColumns = `repeat(${GRID_SIZE}, 20px)`;
