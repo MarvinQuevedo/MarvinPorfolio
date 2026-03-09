@@ -64,8 +64,15 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [pendingOrderId, setPendingOrderId] = useState(null);
+  // Set of trackIds whose chat is still open and listening for updates
+  const [trackedOrders, setTrackedOrders] = useState(new Set());
+  // Quick-reply chips parsed from the last bot message
+  const [suggestedReplies, setSuggestedReplies] = useState([]);
   const messagesEndRef = useRef(null);
+  // Keep ref to language so SSE callbacks always see current value
+  const languageRef = useRef(language);
+
+  useEffect(() => { languageRef.current = language; }, [language]);
 
   useEffect(() => {
     if (language) {
@@ -84,24 +91,59 @@ export default function Chat() {
     }
   }, [language]);
 
-  // Polling for pending order payment
+  // ─── SSE: Real-time order event listener ───────────────────────────────────
   useEffect(() => {
-    if (!pendingOrderId) return;
-    
-    const checkPayment = async () => {
-      try {
-        const { data } = await axios.get(`http://localhost:3001/api/orders/${pendingOrderId}`);
-        if (data.status === 'Pagado / En Proceso') {
-          // Tell the AI to confirm the payment natively
-          handleSend(`(SYSTEM: La orden ${pendingOrderId} ha sido PAGADA exitosamente. Por favor responde exactamente con esta frase: "Tu pedido **${pendingOrderId}** está **Pagado / En Proceso**." y añade un breve agradecimiento debajo.)`, true);
-          setPendingOrderId(null); // Stop polling
-        }
-      } catch (e) {}
-    };
+    if (trackedOrders.size === 0) return;
 
-    const intervalId = setInterval(checkPayment, 3000);
-    return () => clearInterval(intervalId);
-  }, [pendingOrderId]);
+    const eventSources = [];
+
+    for (const trackId of trackedOrders) {
+      const es = new EventSource(`http://localhost:3001/api/orders/${trackId}/events`);
+
+      const handlePaid = (e) => {
+        const data = JSON.parse(e.data);
+        const lang = languageRef.current;
+        const msg = lang === 'Spanish'
+          ? `✅ ¡Tu pago fue recibido exitosamente! Tu pedido **${data.trackId}** ahora está en estado **Pagado / En Proceso**. ¡Gracias por tu compra! Pronto te enviaremos tu pedido.`
+          : `✅ Your payment was received! Order **${data.trackId}** is now **Paid / Processing**. Thank you for your purchase!`;
+        setMessages(prev => [...prev, { role: 'bot', content: msg }]);
+        // Stop tracking this order
+        setTrackedOrders(prev => { const s = new Set(prev); s.delete(trackId); return s; });
+        es.close();
+        // Refresh admin panel
+        axios.get('http://localhost:3001/api/orders').then(res => setOrders(res.data)).catch(() => {});
+      };
+
+      const handleStatusUpdate = (e) => {
+        const data = JSON.parse(e.data);
+        const lang = languageRef.current;
+        const STATUS_LABELS = {
+          'Enviado':    lang === 'Spanish' ? 'Enviado 🙩' : 'Shipped 🙩',
+          'Entregado':  lang === 'Spanish' ? 'Entregado ✅' : 'Delivered ✅',
+          'Shipped':    lang === 'Spanish' ? 'Enviado 🙩' : 'Shipped 🙩',
+          'Delivered':  lang === 'Spanish' ? 'Entregado ✅' : 'Delivered ✅',
+        };
+        const label = STATUS_LABELS[data.status] || data.status;
+        const msg = lang === 'Spanish'
+          ? `📦 Tu pedido **${data.trackId}** ha sido actualizado: **${label}**.`
+          : `📦 Your order **${data.trackId}** status updated: **${label}**.`;
+        setMessages(prev => [...prev, { role: 'bot', content: msg }]);
+        // Refresh admin panel
+        axios.get('http://localhost:3001/api/orders').then(res => setOrders(res.data)).catch(() => {});
+      };
+
+      es.addEventListener('order_paid', handlePaid);
+      es.addEventListener('status_updated', handleStatusUpdate);
+      es.onerror = () => { /* connection closed or server restarted – silently ignore */ };
+
+      eventSources.push(es);
+    }
+
+    return () => {
+      eventSources.forEach(es => es.close());
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedOrders]);
 
   const startChat = (lang) => {
     setLanguage(lang);
@@ -123,8 +165,45 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
+  // ─── Quick-reply chips ───────────────────────────────────────────────
+  function extractSuggestedReplies(text, lang) {
+    // ─ Stage 1: explicit (1) X  (2) Y pattern ────────────────────────────
+    const explicit = [...text.matchAll(/\(\d+\)\s*([^(\n]+)/g)]
+      .map(m => m[1].trim())
+      .filter(s => s.length > 0 && s.length < 60);
+    if (explicit.length >= 2) return explicit;
+
+    // ─ Stage 2: fallback — detect yes/no questions even without (1)/(2) ────────
+    const isSpanish = lang === 'Spanish';
+    // The message must end with '?' (possibly with trailing whitespace)
+    const endsWithQuestion = /\?\s*$/.test(text);
+    if (!endsWithQuestion) return [];
+
+    // Keywords that signal a purchase / help / confirmation question
+    const purchaseKW  = /compra|proceder|adquirir|pedir|ordenar|comprar|purchase|proceed|buy/i;
+    const helpKW      = /ayudar|ayudo|asistir|assist|help|algo más|anything else|more/i;
+    const detailKW    = /detalles|detail|más información|more info|saber más|know more/i;
+
+    if (purchaseKW.test(text) || detailKW.test(text)) {
+      return isSpanish
+        ? ['Sí, quiero comprarlo', 'No, gracias']
+        : ['Yes, I want to buy it', 'No, thanks'];
+    }
+    if (helpKW.test(text)) {
+      return isSpanish
+        ? ['Sí, necesito ayuda', 'No, gracias']
+        : ['Yes, please', 'No, thanks'];
+    }
+    // Generic yes/no question fallback
+    if (/\?/.test(text)) {
+      return isSpanish ? ['Sí', 'No, gracias'] : ['Yes', 'No, thanks'];
+    }
+    return [];
+  }
+
   const handleSend = async (text, isHidden = false) => {
     if (!text.trim() || isLoading) return;
+    setSuggestedReplies([]); // Clear chips on every send
 
     const userMessage = { role: 'user', content: text, isHidden };
     
@@ -148,11 +227,15 @@ export default function Chat() {
       
       const botResponse = data.message;
       setMessages(prev => [...prev, { role: 'bot', content: botResponse.content }]);
-      
-      // Auto-detect if AI just sent a payment link
+
+      // Extract quick-reply suggestions from the response (pass language for fallback chips)
+      const chips = extractSuggestedReplies(botResponse.content, language);
+      if (chips.length >= 2) setSuggestedReplies(chips);
+
+      // Auto-detect if AI just sent a payment link → subscribe via SSE
       const match = botResponse.content.match(/http:\/\/localhost:5173\/pay\/([A-Z0-9\-]+)/);
       if (match && match[1]) {
-        setPendingOrderId(match[1]);
+        setTrackedOrders(prev => new Set([...prev, match[1]]));
       }
 
     } catch (error) {
@@ -242,6 +325,44 @@ export default function Chat() {
               </div>
             </div>
           )}
+
+          {/* Quick-reply chips */}
+          {!isLoading && suggestedReplies.length >= 2 && (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: '0.5rem',
+              padding: '0.5rem 0.75rem', justifyContent: 'flex-start'
+            }}>
+              {suggestedReplies.map((reply, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSend(reply)}
+                  disabled={isLoading}
+                  style={{
+                    background: 'rgba(139, 92, 246, 0.15)',
+                    border: '1px solid rgba(139, 92, 246, 0.5)',
+                    borderRadius: '20px',
+                    padding: '0.45rem 1rem',
+                    color: 'var(--primary)',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(139, 92, 246, 0.35)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(139, 92, 246, 0.15)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  {idx + 1 === 1 ? '✅' : '❌'} {reply}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 
@@ -276,7 +397,6 @@ export default function Chat() {
             <h4 style={{ margin: 0 }}>{p.name}</h4>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>${p.price}</span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Inv: {p.inventory}</span>
             </div>
             <button 
               className="primary-btn" 

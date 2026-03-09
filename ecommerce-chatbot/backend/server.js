@@ -23,6 +23,30 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ─── SSE: in-memory connection registry ──────────────────────────────────────
+// sseClients: Map<trackId, Set<res>>
+const sseClients = new Map();
+
+function sseSubscribe(trackId, res) {
+  if (!sseClients.has(trackId)) sseClients.set(trackId, new Set());
+  sseClients.get(trackId).add(res);
+}
+
+function sseUnsubscribe(trackId, res) {
+  const set = sseClients.get(trackId);
+  if (set) { set.delete(res); if (set.size === 0) sseClients.delete(trackId); }
+}
+
+function sseEmit(trackId, event, data) {
+  const set = sseClients.get(trackId);
+  if (!set || set.size === 0) return;
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of set) {
+    try { res.write(payload); } catch (_) {}
+  }
+  logMessage(`[SSE] emitted '${event}' to ${set.size} listener(s) for ${trackId}`);
+}
+
 // Database is handled via db module
 
 
@@ -64,11 +88,11 @@ const tools = [
     type: 'function',
     function: {
       name: 'search_products',
-      description: 'Search products by keyword. Use this when the user asks about a specific product, category, or mentions words like headphones, phone, watch, etc. Extract the key search terms from the user message.',
+      description: 'Search products by keyword. IMPORTANT: The product catalog is in ENGLISH. Always translate queries to English before searching. For example: "auriculares" → "headphones", "reloj" → "watch", "teléfono" → "phone". Use this when the user asks about a specific product, category, or similar items to an out-of-stock product.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Search keywords extracted from the user message (e.g. "wireless headphones", "watch", "smartphone")' },
+          query: { type: 'string', description: 'Search keywords in ENGLISH (e.g. "wireless headphones", "watch", "smartphone"). NEVER use Spanish words — always translate first.' },
           page:  { type: 'integer', description: 'Page number, starting at 1 (default: 1)' },
         },
         required: ['query'],
@@ -98,7 +122,8 @@ const tools = [
       parameters: {
         type: 'object',
         properties: {
-          product_id: { type: 'string', description: 'The ID of the product' },
+          product_id: { type: 'string', description: 'The ID of the product (e.g. "p3"). MUST be the exact id from list_products or search_products.' },
+          product_name: { type: 'string', description: 'The name of the product (e.g. "Smart Watch"). Used as a fallback if product_id lookup fails.' },
           client_name: { type: 'string', description: 'The actual full name provided by the user' },
           client_address: { type: 'string', description: 'The actual delivery address provided by the user' },
           client_phone: { type: 'string', description: 'The actual phone number provided by the user' },
@@ -185,16 +210,28 @@ async function handleToolCall(name, args) {
 
   // ─── Order Tools ─────────────────────────────────────────────────────────────
   if (name === 'create_order') {
-    const { product_id, client_name, client_address, client_phone } = args;
-    
+    // Normalize aliases: AI sometimes leaks DSML with 'customer_*' instead of 'client_*'
+    const product_id    = args.product_id;
+    const client_name   = args.client_name   || args.customer_name   || args.name;
+    const client_address= args.client_address|| args.customer_address|| args.address;
+    const client_phone  = args.client_phone  || args.customer_phone  || args.phone;
+
     // Validate basics
     if (!product_id || !client_name || !client_address || !client_phone) {
-      return JSON.stringify({ error: "Missing required fields" });
+      return JSON.stringify({ error: "Missing required fields", received_keys: Object.keys(args) });
     }
     
-    const product = await db.getProductById(product_id);
+    let product = await db.getProductById(product_id);
+    // Fallback: if the AI hallucinated a wrong ID, try to find by product_name
+    if (!product && args.product_name) {
+      const fallbackResults = await db.searchProducts(args.product_name, 1, 0);
+      if (fallbackResults && fallbackResults.length > 0) {
+        product = fallbackResults[0];
+        logMessage(`[create_order] product_id "${product_id}" not found — recovered via name search "${args.product_name}": ${product.id} (${product.name})`);
+      }
+    }
     if (!product) {
-      return JSON.stringify({ error: "Product not found" });
+      return JSON.stringify({ error: "Product not found", hint: "Use the exact product_id from the search results. Pass product_name as a backup." });
     }
 
     if (product.inventory <= 0) {
@@ -253,25 +290,40 @@ async function handleToolCall(name, args) {
 
 
 const getSystemPrompt = (language = "English") => `
-You are a sales assistant for an online store. You have tools to browse and search the product catalog.
+You are a warm, friendly and enthusiastic sales assistant for an online store. Be conversational, encouraging and personable at all times.
 RULES:
 1. CATALOG: You do NOT know the products in advance. ALWAYS use list_products or search_products to look them up.
    - When the user asks to see products or the catalog → call list_products.
-   - When the user mentions a product type or keyword (e.g. "headphones", "watch", "phone") → call search_products with that keyword.
+   - When the user mentions a product type or keyword → call search_products. CRITICAL: The catalog is stored in ENGLISH. You MUST always translate search terms to English before calling search_products. Examples: "auriculares" → "headphones", "reloj" → "watch", "teclado" → "keyboard".
+   - When a product is out of stock and you want to suggest similar items → call search_products using the English category/type of that product (e.g. if "Wireless Headphones" is out of stock, search "headphones" or "audio").
    - When a user wants details about a specific product they already saw → call get_product_details.
-2. FORMAT: Be EXTREMELY brief. Only show Name and Price. Always include the product image URL.
-3. INVENTORY: Only mention stock if it's low (≤ 2 units) or if the user asks.
+2. FORMAT: Be brief. Only show Name and Price. Always include the product image URL.
+   - After showing a product and asking if the user wants to buy it, ALWAYS end your message with EXACTLY this line (no variations):
+     (1) Sí, quiero comprarlo  (2) No, gracias
+3. INVENTORY: STRICTLY NEVER mention stock count unless inventory is ≤ 2 units OR the user explicitly asks about stock.
+   - FORBIDDEN: "Tenemos X unidades", "hay X disponibles", "X en stock" — when X > 2. Simply omit this info.
+   - If inventory IS ≤ 2, add urgency: e.g. "¡Date prisa, quedan muy pocas unidades! ⚡"
 4. ORDERING: To create an order, you MUST collect: Full Name, Shipping Address, and Phone Number.
-   - The user may send all three fields in a SINGLE message, each on its own line or separated by commas. Parse them all at once.
-   - PHONE DETECTION: Any sequence of digits (6–15 characters, may include spaces, dashes, or parentheses) that appears alone on a line OR is the only numeric token in the message IS the phone number. Do NOT ask for it again if it was already provided in a previous message.
-   - ADDRESS DETECTION: Anything that contains street/location words (e.g. Casa, Calle, Av, Col, No., #, Block, Manzana, Polígono, Lote, Barrio, Sector, Ciudad, Municipio, Depto or a cardinal direction followed by a number) is the shipping address. Accept it exactly as written. NEVER question its format or completeness.
+   - TONE: Be warm and encouraging. Use phrases like "¡Perfecto!", "¡Genial!", "¡Gracias [nombre]!", emojis are welcome.
+   - Case A — User sends ALL three fields in one message (each on its own line or separated by commas): parse them at once and immediately call create_order.
+   - Case B — User provides data ONE BY ONE (one field per message):
+       • You receive only the name → respond warmly acknowledging the name, then ask ONLY for the shipping address. Example: "¡Gracias, [nombre]! Ahora necesito tu dirección de envío 📍"
+       • You receive the address (name already known) → respond warmly, then ask ONLY for the phone number. Example: "¡Perfecto! Ya casi terminamos 😊 ¿Cuál es tu número de teléfono? 📱"
+       • You receive the phone (name + address already known) → immediately call create_order. No confirmation needed.
+       • You receive the phone before the address → acknowledge and ask ONLY for the address next.
+   - PHONE DETECTION: Any sequence of digits (6–15 chars, may include spaces, dashes, parentheses) alone on a line OR the only numeric token in the message IS the phone number. Never ask for it again once provided.
+   - ADDRESS DETECTION: Anything containing street/location words (e.g. Casa, Calle, Av, Col, No., #, Block, Manzana, Polígono, Lote, Barrio, Sector, Ciudad, Municipio, Depto or a cardinal direction followed by a number) IS the address. Accept exactly as written. NEVER question its format or completeness.
    - If ALL three fields are present across the conversation, call create_order IMMEDIATELY without asking for confirmation.
    - DO NOT invent data. DO NOT call create_order with empty or fake values.
-   - After creating the order, tell the user the estimated delivery time is ${DELIVERY_MIN_DAYS}–${DELIVERY_MAX_DAYS} business days.
+   - PRODUCT ID: ALWAYS use the EXACT product_id string that was returned by list_products or search_products (e.g. "p3", "p7"). NEVER guess, increment, or modify it. If unsure, look at the most recent tool result in the conversation.
+   - NEVER call search_products before create_order. Use the product_id already in the conversation history.
+   - After creating the order, warmly tell the user the estimated delivery time is ${DELIVERY_MIN_DAYS}–${DELIVERY_MAX_DAYS} business days.
 5. TRACKING: ONLY call check_status if the user explicitly gives you a TRK- code.
 6. NO TAGS: Never output <...>, [JSON], or internal markup. Speak only in plain text.
 7. Language: ${language}.
-8. FOLLOW-UP: After completing any process, ask if you can help with anything else. If the user is done, reply with a warm goodbye.
+8. FOLLOW-UP: After completing any process (order created, status checked, question answered), ask if you can help with anything else, ending with EXACTLY this line:
+   (1) Sí  (2) No, gracias
+   If the user is done, reply with a warm, personalized goodbye. 😊
 `;
 
 
@@ -284,27 +336,32 @@ RULES:
 //   2. parseDsmlToolCall() – extracts the intended function name + args so we
 //                           can execute the tool ourselves and recover silently.
 
+// NOTE ON DSML CHARACTERS:
+// DeepSeek outputs DSML tags using the FULLWIDTH vertical bar ｜ (U+FF5C)
+// instead of the ASCII pipe | (U+007C). All regexes below use [|\uff5c] to
+// match both so recovery works regardless of which variant the model uses.
+
 function isDsmlLeak(raw) {
   if (!raw) return false;
-  const stripped = raw
-    .replace(/<\|DSML\|[\s\S]*?<\/\|DSML\|>/gi, '')
-    .replace(/<[\s\S]*?>/gi, '')
-    .trim();
-  return stripped.length === 0 && /<\|DSML\|/i.test(raw);
+  // A leak is when the response IS (or contains) a DSML function-call block.
+  // We detect it by looking for the DSML invoke/function_calls opening tag,
+  // NOT by checking if the stripped content is empty (that fails when params
+  // have non-empty values like "headphones").
+  return /[|\uFF5C]DSML[|\uFF5C](invoke|function_calls)/i.test(raw);
 }
 
 // Returns { name, args } or null if the DSML can't be parsed.
 function parseDsmlToolCall(raw) {
   try {
-    // Extract invoke block: <|DSML|invoke name="fn_name">...</|DSML|invoke>
-    const invokeMatch = raw.match(/<\|DSML\|invoke\s+name="([^"]+)"[\s\S]*?<\/\|DSML\|invoke>/i);
+    // Match: <[|｜]DSML[|｜]invoke name="fn_name">...</[|｜]DSML[|｜]invoke>
+    const invokeMatch = raw.match(/<[|\uFF5C]DSML[|\uFF5C]invoke\s+name="([^"]+)"[\s\S]*?<\/[|\uFF5C]DSML[|\uFF5C]invoke>/i);
     if (!invokeMatch) return null;
 
     const fnName = invokeMatch[1];
     const block  = invokeMatch[0];
 
-    // Extract each <|DSML|parameter name="key" ...>value</|DSML|parameter>
-    const paramRegex = /<\|DSML\|parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\|DSML\|parameter>/gi;
+    // Match: <[|｜]DSML[|｜]parameter name="key" ...>value</[|｜]DSML[|｜]parameter>
+    const paramRegex = /<[|\uFF5C]DSML[|\uFF5C]parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[|\uFF5C]DSML[|\uFF5C]parameter>/gi;
     const args = {};
     let m;
     while ((m = paramRegex.exec(block)) !== null) {
@@ -319,7 +376,9 @@ function parseDsmlToolCall(raw) {
 
 function sanitizeContent(raw) {
   return (raw || '')
-    .replace(/<\|DSML\|[\s\S]*?<\/\|DSML\|>/gi, '')
+    // Strip full DSML blocks first
+    .replace(/<[|\uFF5C]DSML[|\uFF5C][\s\S]*?<\/[|\uFF5C]DSML[|\uFF5C][^>]*>/gi, '')
+    // Strip any remaining angle-bracket tags
     .replace(/<[\s\S]*?>/gi, '')
     .trim();
 }
@@ -426,16 +485,26 @@ app.post('/api/chat', async (req, res) => {
             const recoveryResult = await handleToolCall(leaked.name, leaked.args);
             logMessage(`[DSML-RECOVERY] Tool result: ${recoveryResult}`);
 
-            // Push a synthetic tool result and ask for a plain-text reply
+            // Push a synthetic tool result and ask for a plain-text reply.
+            // DeepSeek requires: assistant msg with tool_calls → tool msg with matching tool_call_id.
+            // We synthesize a valid tool_calls entry so the API doesn't reject the tool message.
+            const recoveryCallId = 'dsml-recovery-' + Date.now();
             currentMessages.push({
               role: 'assistant',
-              content: `[System recovered a failed tool call: ${leaked.name}]`
+              content: null,
+              tool_calls: AI_PROVIDER === 'deepseek' ? [{
+                id: recoveryCallId,
+                type: 'function',
+                function: {
+                  name: leaked.name,
+                  arguments: JSON.stringify(leaked.args),
+                },
+              }] : undefined,
             });
             currentMessages.push({
               role: 'tool',
               name: leaked.name,
-              // deepseek needs tool_call_id; use a placeholder since it came from a leak
-              ...(AI_PROVIDER === 'deepseek' ? { tool_call_id: 'dsml-recovery' } : {}),
+              ...(AI_PROVIDER === 'deepseek' ? { tool_call_id: recoveryCallId } : {}),
               content: recoveryResult
             });
             currentMessages.push({
@@ -495,6 +564,34 @@ app.get('/api/orders/:id', async (req, res) => {
   res.json(order);
 });
 
+// ─── SSE subscription endpoint ────────────────────────────────────────────────
+// The chat subscribes here while an order is active.
+app.get('/api/orders/:id/events', (req, res) => {
+  const trackId = req.params.id;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Send a heartbeat immediately so the browser knows the stream is open
+  res.write(': connected\n\n');
+
+  sseSubscribe(trackId, res);
+  logMessage(`[SSE] client subscribed to ${trackId}`);
+
+  // Keepalive ping every 25 s to prevent proxy timeouts
+  const ping = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) { clearInterval(ping); }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    sseUnsubscribe(trackId, res);
+    logMessage(`[SSE] client disconnected from ${trackId}`);
+  });
+});
+
 // Admin Endpoint: Get all orders
 app.get('/api/orders', async (req, res) => {
   const orders = await db.getAllOrders();
@@ -506,9 +603,13 @@ app.put('/api/orders/:id/status', async (req, res) => {
   const { status } = req.body;
   const order = await db.getOrderById(req.params.id);
   if (!order) return res.status(404).json({ error: "Order not found" });
-  
+
   await db.updateOrderStatus(req.params.id, status, { status: status, timestamp: Date.now() });
   const updatedOrder = await db.getOrderById(req.params.id);
+
+  // Notify any open chat sessions listening for this order
+  sseEmit(req.params.id, 'status_updated', { trackId: req.params.id, status });
+
   res.json({ success: true, order: updatedOrder });
 });
 
@@ -571,7 +672,10 @@ app.post('/api/orders/:id/pay', async (req, res) => {
   await db.updateProductInventory(order.productId, -1);
   const finalStatus = 'Paid / Processing';
   await db.updateOrderStatus(req.params.id, finalStatus, { status: finalStatus, timestamp: Date.now() });
-  
+
+  // Notify any open chat sessions listening for this order
+  sseEmit(req.params.id, 'order_paid', { trackId: req.params.id, status: finalStatus });
+
   res.json({ success: true, message: "Payment successful. Inventory updated." });
 
 });
