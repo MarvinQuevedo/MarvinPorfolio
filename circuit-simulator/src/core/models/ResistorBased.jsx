@@ -79,19 +79,19 @@ export class SwitchModel extends ResistorModel {
   get color() { return '#a8a29e'; }
 
   applyMNA(A, Z, componentState, finalNodeMap) {
-    // A switch is just a resistor that is ~0 ohms when closed and ~infinite ohms when open.
-    const originalR = componentState.properties.resistance;
-    componentState.properties.resistance = componentState.properties.closed ? 1e-6 : 1e9;
+    // Open = 100TΩ (truly negligible leakage) 
+    // Closed = 1Ω (numerically stable, ~0V drop at mA range)
+    const r = componentState.properties.closed ? 1.0 : 1e13;
+    componentState.properties.resistance = r;
     super.applyMNA(A, Z, componentState, finalNodeMap);
-    componentState.properties.resistance = originalR;
+    componentState.properties.resistance = undefined;
   }
 
   extractCurrent(componentState, nodeVoltages) {
-    const originalR = componentState.properties.resistance;
-    componentState.properties.resistance = componentState.properties.closed ? 1e-6 : 1e9;
-    const ans = super.extractCurrent(componentState, nodeVoltages);
-    componentState.properties.resistance = originalR;
-    return ans;
+    if (!componentState.properties.closed) return 0;
+    const v1 = nodeVoltages[componentState.pins[0].id] || 0;
+    const v2 = nodeVoltages[componentState.pins[1].id] || 0;
+    return (v1 - v2) / 1.0; // matches stamped R=1Ω
   }
 
   checkDamage(componentState, current, voltage) {

@@ -152,7 +152,7 @@ function App() {
               zoom={zoom}
             />
           )}
-          renderWire={(wire) => (
+          renderWire={(wire, zoom) => (
             <WireNode 
               key={wire.id}
               wire={wire}
@@ -161,6 +161,8 @@ function App() {
               onSelect={(id) => dispatch({ type: 'SET_SELECTED', payload: id })}
               simulationCurrent={state.simulationResults.branchCurrents[wire.id] || 0}
               isSimulating={state.isSimulating}
+              dispatch={dispatch}
+              zoom={zoom}
             />
           )}
         />

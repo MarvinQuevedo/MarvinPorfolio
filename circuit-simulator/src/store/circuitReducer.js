@@ -49,6 +49,16 @@ export function circuitReducer(state, action) {
         wires: [...state.wires, action.payload]
       };
 
+    case 'UPDATE_WIRE_WAYPOINTS':
+      return {
+        ...state,
+        wires: state.wires.map(w =>
+          w.id === action.payload.id
+            ? { ...w, waypoints: action.payload.waypoints }
+            : w
+        )
+      };
+
     case 'MOVE_COMPONENT':
       return {
         ...state,

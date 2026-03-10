@@ -2,6 +2,7 @@ import { registry } from './ComponentRegistry';
 import { ResistorModel, SwitchModel, BulbModel } from './models/ResistorBased.jsx';
 import { DcVoltageSourceModel, GroundModel } from './models/Sources.jsx';
 import { DiodeModel, LedModel } from './models/Semiconductors.jsx';
+import { CapacitorModel, NpnTransistorModel, PnpTransistorModel } from './models/Reactive.jsx';
 
 // Register core models
 registry.register(new ResistorModel());
@@ -11,6 +12,9 @@ registry.register(new DcVoltageSourceModel());
 registry.register(new GroundModel());
 registry.register(new DiodeModel());
 registry.register(new LedModel());
+registry.register(new CapacitorModel());
+registry.register(new NpnTransistorModel());
+registry.register(new PnpTransistorModel());
 
 // Export types dynamically for backwards compatibility
 export const COMPONENT_TYPES = {};
@@ -38,7 +42,42 @@ export { registry };
 export function createComponent(type, x, y) {
   const def = registry.get(type);
   if (!def) throw new Error(`Unknown component type: ${type}`);
-  
+
+  // Pin layout helper — handles 1, 2, and 3-pin components
+  const buildPins = (numPins) => {
+    if (numPins === 1) {
+      return [{ id: `pin_${Date.now()}_${Math.random() * 1e6 | 0}_0`, index: 0, offsetX: 0, offsetY: 0 }];
+    }
+    if (numPins === 2) {
+      return [0, 1].map(i => ({
+        id: `pin_${Date.now()}_${Math.random() * 1e6 | 0}_${i}`,
+        index: i,
+        offsetX: i === 0 ? -30 : 30,
+        offsetY: 0
+      }));
+    }
+    if (numPins === 3) {
+      // Transistor layout: Base(-30,0), Collector(30,-24), Emitter(30,24)
+      const positions = [
+        { offsetX: -30, offsetY:  0  }, // 0 = Base
+        { offsetX:  30, offsetY: -24 }, // 1 = Collector
+        { offsetX:  30, offsetY:  24 }, // 2 = Emitter
+      ];
+      return positions.map((pos, i) => ({
+        id: `pin_${Date.now()}_${Math.random() * 1e6 | 0}_${i}`,
+        index: i,
+        ...pos
+      }));
+    }
+    // Generic fallback
+    return Array.from({ length: numPins }).map((_, i) => ({
+      id: `pin_${Date.now()}_${Math.random() * 1e6 | 0}_${i}`,
+      index: i,
+      offsetX: i === 0 ? -30 : 30,
+      offsetY: 0
+    }));
+  };
+
   return {
     id: `comp_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
     type,
@@ -46,13 +85,7 @@ export function createComponent(type, x, y) {
     y,
     rotation: 0,
     properties: { ...def.defaultProperties },
-    pins: Array.from({ length: def.numPins }).map((_, i) => ({
-      id: `pin_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`,
-      index: i,
-      // For rendering, pin relative offsets:
-      offsetX: def.numPins === 1 ? 0 : (i === 0 ? -30 : 30),
-      offsetY: 0
-    }))
+    pins: buildPins(def.numPins)
   };
 }
 

@@ -102,7 +102,7 @@ export default function Canvas({
         style={{ position: 'absolute', top: 0, left: 0 }}
       >
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-          {wires.map(w => renderWire(w))}
+          {wires.map(w => renderWire(w, zoom))}
           
           {wiringStartPin && (
             <line 
