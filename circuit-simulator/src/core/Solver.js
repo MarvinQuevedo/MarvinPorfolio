@@ -72,12 +72,6 @@ export function simulateCircuit(components, wires) {
     c.pins.forEach(p => getOrAssignNode(p.id));
   });
 
-  wires.forEach(w => {
-    const nodeA = getOrAssignNode(w.startPinId);
-    const nodeB = getOrAssignNode(w.endPinId);
-    mergeNodes(nodeA, nodeB);
-  });
-
   // Virtually connect all GROUND components together
   const groundPins = [];
   components.forEach(c => {
@@ -140,22 +134,55 @@ export function simulateCircuit(components, wires) {
   const mnaSize = numNodes + totalExtraVars;
   if (mnaSize === 0) return { nodeVoltages: {}, branchCurrents: {} };
 
-  const A = Array.from({ length: mnaSize }, () => new Array(mnaSize).fill(0));
-  const Z = new Array(mnaSize).fill(0);
-
   const resolvedNodeMap = new Map();
   pinToNode.forEach((originalNode, pinId) => {
     resolvedNodeMap.set(pinId, finalNodeMap.get(originalNode));
   });
 
-  components.forEach(c => {
-    const model = registry.get(c.type);
-    if (model) {
-      model.applyMNA(A, Z, c, resolvedNodeMap, extraVarMap.get(c.id) || []);
-    }
-  });
+  let X = new Array(mnaSize).fill(0);
+  
+  for (let iter = 0; iter < 20; iter++) {
+    const A = Array.from({ length: mnaSize }, () => new Array(mnaSize).fill(0));
+    const Z = new Array(mnaSize).fill(0);
 
-  const X = solveLinearSystem(A, Z);
+    const tempNodeVoltages = {};
+    pinToNode.forEach((originalNode, pinId) => {
+      const mnaNode = finalNodeMap.get(originalNode);
+      if (mnaNode === 0) tempNodeVoltages[pinId] = 0;
+      else tempNodeVoltages[pinId] = X[mnaNode - 1] || 0;
+    });
+
+    components.forEach(c => {
+      const model = registry.get(c.type);
+      if (model) {
+        model.applyMNA(A, Z, c, resolvedNodeMap, extraVarMap.get(c.id) || [], tempNodeVoltages);
+      }
+    });
+
+    const G_wire = 1e3; // 1 mOhm (safe for numeric stability in JS)
+    wires.forEach(w => {
+      const n1 = resolvedNodeMap.get(w.startPinId) || 0;
+      const n2 = resolvedNodeMap.get(w.endPinId) || 0;
+      if (n1 > 0) A[n1 - 1][n1 - 1] += G_wire;
+      if (n2 > 0) A[n2 - 1][n2 - 1] += G_wire;
+      if (n1 > 0 && n2 > 0) {
+        A[n1 - 1][n2 - 1] -= G_wire;
+        A[n2 - 1][n1 - 1] -= G_wire;
+      }
+    });
+
+    const newX = solveLinearSystem(A, Z);
+    
+    let diff = 0;
+    let hasNaN = false;
+    for (let i = 0; i < mnaSize; i++) {
+        if (isNaN(newX[i])) hasNaN = true;
+        diff += Math.abs(newX[i] - X[i]);
+    }
+    
+    X = newX;
+    if (hasNaN || diff < 1e-4) break;
+  }
 
   const nodeVoltages = {};
   pinToNode.forEach((originalNode, pinId) => {
@@ -178,26 +205,11 @@ export function simulateCircuit(components, wires) {
     }
   });
 
-  // Calculate actual current through wires.
-  // In MNA, wires are ideal. To animate wires properly, they must carry current.
-  // Since we haven't modeled each wire as a tiny resistor in MNA, we can approximate 
-  // by associating the wire current with the current of the component connected to it.
+  // Calculate actual current through wires physically using their 1mOhm resistance
   wires.forEach(w => {
-    // Basic heuristic for visual feedback: If there's a non-zero voltage difference between 
-    // nodes in the whole circuit, there's current. Let's just assign a blanket high/low current indicator
-    // for animation if the connected components have current.
-    let connectedComponentCurrent = 0;
-    
-    // Find a component connected to startPin
-    components.forEach((c) => {
-      if (c.pins.some(p => p.id === w.startPinId || p.id === w.endPinId)) {
-        if (branchCurrents[c.id] !== undefined) {
-          connectedComponentCurrent = Math.max(Math.abs(connectedComponentCurrent), Math.abs(branchCurrents[c.id]));
-        }
-      }
-    });
-
-    branchCurrents[w.id] = connectedComponentCurrent; 
+    const vStart = nodeVoltages[w.startPinId] || 0;
+    const vEnd = nodeVoltages[w.endPinId] || 0;
+    branchCurrents[w.id] = (vStart - vEnd) * 1e3; 
   });
 
   return { nodeVoltages, branchCurrents };

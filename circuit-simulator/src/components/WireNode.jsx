@@ -31,9 +31,17 @@ export default function WireNode({ wire, components, isSelected, onSelect, simul
     pathData = `M ${startCoords.x} ${startCoords.y} L ${startCoords.x} ${midY} L ${endCoords.x} ${midY} L ${endCoords.x} ${endCoords.y}`;
   }
 
-  // Determine wire appearance based on simulation
   const hasCurrent = Math.abs(simulationCurrent) > 1e-6;
   const strokeColor = isSelected ? 'var(--accent-color)' : (hasCurrent ? 'var(--wire-active)' : 'var(--wire-color)');
+
+  // Format current for tooltip
+  let tooltipText = "Wire";
+  if (hasCurrent) {
+    const i = Math.abs(simulationCurrent);
+    if (i < 0.001) tooltipText = `${(i * 1000000).toFixed(2)} µA`;
+    else if (i < 1) tooltipText = `${(i * 1000).toFixed(2)} mA`;
+    else tooltipText = `${(i).toFixed(3)} A`;
+  }
 
   return (
     <g 
@@ -43,6 +51,8 @@ export default function WireNode({ wire, components, isSelected, onSelect, simul
       }}
       style={{ cursor: 'pointer' }}
     >
+      {/* Tooltip on hover */}
+      <title>{tooltipText}</title>
       {/* Invisible thicker hit-box */}
       <path d={pathData} fill="none" stroke="transparent" strokeWidth="15" />
       

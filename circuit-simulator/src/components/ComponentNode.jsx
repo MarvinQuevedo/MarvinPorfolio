@@ -75,6 +75,14 @@ export default function ComponentNode({
     return null;
   };
 
+  let tooltipText = def ? def.label : 'Component';
+  if (isSimulating && simulationCurrent !== undefined) {
+    const i = Math.abs(simulationCurrent);
+    if (i < 0.001) tooltipText += `\nCurrent: ${(i * 1000000).toFixed(2)} µA`;
+    else if (i < 1) tooltipText += `\nCurrent: ${(i * 1000).toFixed(2)} mA`;
+    else tooltipText += `\nCurrent: ${(i).toFixed(3)} A`;
+  }
+
   return (
     <g 
       transform={`translate(${x}, ${y}) rotate(${rotation})`}
@@ -86,7 +94,9 @@ export default function ComponentNode({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-      />
+      >
+        <title>{tooltipText}</title>
+      </rect>
       {isSelected && (
         <g>
           <rect x="-35" y="-30" width="70" height="60" fill="none" stroke="var(--accent-color)" strokeWidth="1" strokeDasharray="4 2" />

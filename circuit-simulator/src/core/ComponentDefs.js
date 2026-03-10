@@ -1,6 +1,7 @@
 import { registry } from './ComponentRegistry';
 import { ResistorModel, SwitchModel, BulbModel } from './models/ResistorBased.jsx';
 import { DcVoltageSourceModel, GroundModel } from './models/Sources.jsx';
+import { DiodeModel, LedModel } from './models/Semiconductors.jsx';
 
 // Register core models
 registry.register(new ResistorModel());
@@ -8,6 +9,8 @@ registry.register(new SwitchModel());
 registry.register(new BulbModel());
 registry.register(new DcVoltageSourceModel());
 registry.register(new GroundModel());
+registry.register(new DiodeModel());
+registry.register(new LedModel());
 
 // Export types dynamically for backwards compatibility
 export const COMPONENT_TYPES = {};
@@ -24,6 +27,7 @@ registry.getAll().forEach(model => {
     numPins: model.numPins,
     defaultProperties: model.defaultProperties,
     propertyLabels: model.propertyLabels,
+    propertyMeta: model.propertyMeta,
     color: model.color,
   };
 });

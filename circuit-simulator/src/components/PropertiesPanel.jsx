@@ -31,31 +31,57 @@ export default function PropertiesPanel({ elementId, components, wires, dispatch
     <div className="properties-panel glass-panel">
       <h3 style={{ marginTop: 0, marginBottom: '15px', color: 'var(--text-primary)' }}>{def?.label || 'Component'}</h3>
       
-      {def && def.propertyLabels && Object.keys(def.propertyLabels).length > 0 ? (
+      {(def && def.propertyMeta) || (def && def.propertyLabels && Object.keys(def.propertyLabels).length > 0) ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {Object.entries(def.propertyLabels).map(([key, label]) => {
+          {Object.entries(def.propertyMeta || Object.keys(def.propertyLabels).reduce((a, k) => ({...a, [k]: {label: def.propertyLabels[k], type: 'number'}}), {})).map(([key, meta]) => {
             const val = component.properties[key];
             return (
               <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{label}</label>
-                <input 
-                  type="number" 
-                  value={val}
-                  onChange={(e) => {
-                    dispatch({ 
-                      type: 'UPDATE_PROPERTY', 
-                      payload: { id: component.id, key, value: parseFloat(e.target.value) || 0 } 
-                    });
-                  }}
-                  style={{
-                    background: 'rgba(0,0,0,0.2)',
-                    border: '1px solid var(--panel-border)',
-                    color: 'white',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    fontFamily: 'inherit'
-                  }}
-                />
+                <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{meta.label || meta}</label>
+                {meta.type === 'select' ? (
+                  <select 
+                    value={val}
+                    onChange={(e) => {
+                      dispatch({ 
+                        type: 'UPDATE_PROPERTY', 
+                        payload: { id: component.id, key, value: e.target.value } 
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(0,0,0,0.2)',
+                      border: '1px solid var(--panel-border)',
+                      color: 'white',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      fontFamily: 'inherit'
+                    }}
+                  >
+                    {meta.options.map(opt => (
+                      <option key={opt.value} value={opt.value} style={{ background: '#1e293b' }}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input 
+                    type="number" 
+                    value={val}
+                    onChange={(e) => {
+                      dispatch({ 
+                        type: 'UPDATE_PROPERTY', 
+                        payload: { id: component.id, key, value: parseFloat(e.target.value) || 0 } 
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(0,0,0,0.2)',
+                      border: '1px solid var(--panel-border)',
+                      color: 'white',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      fontFamily: 'inherit'
+                    }}
+                  />
+                )}
               </div>
             );
           })}
