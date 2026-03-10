@@ -3,12 +3,14 @@ import React, { useRef, useCallback } from 'react';
 const GRID = 10;
 const snap = v => Math.round(v / GRID) * GRID;
 
-/** Converts a PointerEvent to SVG-space coordinates (accounts for pan + zoom). */
-function svgPoint(e, svgEl) {
+/** Convert client (screen) coordinates to world (canvas) coordinates.
+ *  Must be called with the element that received the pointer event,
+ *  because its getCTM() already includes the canvas pan+zoom group transform. */
+function clientToWorld(clientX, clientY, inverseCTM, svgEl) {
   const pt = svgEl.createSVGPoint();
-  pt.x = e.clientX;
-  pt.y = e.clientY;
-  return pt.matrixTransform(svgEl.getScreenCTM().inverse());
+  pt.x = clientX;
+  pt.y = clientY;
+  return pt.matrixTransform(inverseCTM);
 }
 
 export default function WireNode({
@@ -109,59 +111,60 @@ export default function WireNode({
     dispatch({ type: 'UPDATE_WIRE_WAYPOINTS', payload: { id: wire.id, waypoints: newWps } });
   }, [dispatch, wire.id]);
 
-  // Drag an EXISTING waypoint (index into `waypoints` array)
   const onWaypointPointerDown = (e, idx) => {
     e.stopPropagation();
     if (e.button !== 0 || isSimulating) return;
-    dragRef.current = { wpIndex: idx, svgEl: e.currentTarget.closest('svg') };
+    const el = e.currentTarget;
+    const svgEl = el.ownerSVGElement;
+    const inverseCTM = el.getScreenCTM().inverse();
+    dragRef.current = { wpIndex: idx, inverseCTM, svgEl };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  // Drag the WIRE BODY → insert new waypoint at click position then drag it
-  const onWireBodyPointerDown = (e) => {
+  const startDragBody = (e) => {
     e.stopPropagation();
     if (e.button !== 0) return;
     if (!isSelected) { onSelect(wire.id); return; }
     if (isSimulating) return;
 
-    const svgEl = e.currentTarget.closest('svg');
-    const pt = svgPoint(e, svgEl);
+    // Capture coordinate transform ONCE at drag start from the clicked element.
+    // This element is inside the pan+zoom <g>, so its CTM already includes those.
+    const el = e.currentTarget;
+    const svgEl = el.ownerSVGElement;
+    const inverseCTM = el.getScreenCTM().inverse();
+    const pt = clientToWorld(e.clientX, e.clientY, inverseCTM, svgEl);
     const newWp = { x: snap(pt.x), y: snap(pt.y) };
 
-    // Insert the new waypoint at the closest segment
+    // Insert at the closest wire segment
     let bestIdx = 0;
     let bestDist = Infinity;
     for (let i = 0; i < allPoints.length - 1; i++) {
       const d = pointToSegmentDist(pt, allPoints[i], allPoints[i + 1]);
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    // bestIdx = segment index → waypoints insert position = bestIdx
     const newWps = [...waypoints];
     newWps.splice(bestIdx, 0, newWp);
     updateWaypoints(newWps);
 
-    // Start dragging the newly inserted waypoint
-    dragRef.current = { wpIndex: bestIdx, svgEl, pendingWps: newWps };
+    dragRef.current = { wpIndex: bestIdx, inverseCTM, svgEl, pendingWps: newWps };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  const onPointerMove = (e) => {
+  const onPointerMove = useCallback((e) => {
     const d = dragRef.current;
     if (!d) return;
-    const pt = svgPoint(e, d.svgEl);
+    const pt = clientToWorld(e.clientX, e.clientY, d.inverseCTM, d.svgEl);
     const snapped = { x: snap(pt.x), y: snap(pt.y) };
-    const currentWps = d.pendingWps
-      ? d.pendingWps
-      : (wire.waypoints || []);
+    const currentWps = d.pendingWps ?? (wire.waypoints || []);
     if (
       currentWps[d.wpIndex] &&
       currentWps[d.wpIndex].x === snapped.x &&
       currentWps[d.wpIndex].y === snapped.y
     ) return;
     const updated = currentWps.map((wp, i) => i === d.wpIndex ? snapped : wp);
-    dragRef.current = { ...d, pendingWps: null }; // clear pending after first real move
+    dragRef.current = { ...d, pendingWps: null };
     updateWaypoints(updated);
-  };
+  }, [wire.waypoints, updateWaypoints]);
 
   const onPointerUp = (e) => {
     e.currentTarget?.releasePointerCapture?.(e.pointerId);
@@ -191,7 +194,7 @@ export default function WireNode({
         stroke="transparent"
         strokeWidth={16 / zoom}
         style={{ cursor: isSelected && !isSimulating ? 'cell' : 'pointer' }}
-        onPointerDown={onWireBodyPointerDown}
+        onPointerDown={startDragBody}
       />
 
       {/* ── Wire body ──────────────────────────────────────────────────────── */}
