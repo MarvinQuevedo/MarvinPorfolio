@@ -1,6 +1,34 @@
 import BaseComponent from './BaseComponent.jsx';
 import React from 'react';
 
+// ─── Real-world transistor model libraries ────────────────────────────────────
+export const NPN_MODELS = {
+  '2N3904':  { label: '2N3904 (General Purpose)', beta: 100, Vbe: 0.65, Ron: 10,  maxIc: 0.2 },
+  'BC547':   { label: 'BC547 (Low Power)',         beta: 200, Vbe: 0.65, Ron: 8,   maxIc: 0.1 },
+  '2N2222':  { label: '2N2222 (Fast Switch)',      beta: 150, Vbe: 0.60, Ron: 5,   maxIc: 0.6 },
+  'BC337':   { label: 'BC337 (Medium Power)',      beta: 100, Vbe: 0.65, Ron: 5,   maxIc: 0.8 },
+  'TIP31C':  { label: 'TIP31C (Power NPN)',        beta: 40,  Vbe: 0.70, Ron: 1,   maxIc: 3.0 },
+  'BD139':   { label: 'BD139 (Power Driver)',      beta: 80,  Vbe: 0.70, Ron: 1.5, maxIc: 1.5 },
+  'CUSTOM':  { label: 'Custom…',                  beta: 100, Vbe: 0.70, Ron: 10,  maxIc: 0.6 },
+};
+
+export const PNP_MODELS = {
+  '2N3906':  { label: '2N3906 (General Purpose)', beta: 100, Vbe: 0.65, Ron: 10,  maxIc: 0.2 },
+  'BC557':   { label: 'BC557 (Low Power)',         beta: 200, Vbe: 0.65, Ron: 8,   maxIc: 0.1 },
+  '2N2907':  { label: '2N2907 (Fast Switch)',      beta: 150, Vbe: 0.60, Ron: 5,   maxIc: 0.6 },
+  'BC327':   { label: 'BC327 (Medium Power)',      beta: 100, Vbe: 0.65, Ron: 5,   maxIc: 0.8 },
+  'TIP32C':  { label: 'TIP32C (Power PNP)',        beta: 40,  Vbe: 0.70, Ron: 1,   maxIc: 3.0 },
+  'BD140':   { label: 'BD140 (Power Driver)',      beta: 80,  Vbe: 0.70, Ron: 1.5, maxIc: 1.5 },
+  'CUSTOM':  { label: 'Custom…',                  beta: 100, Vbe: 0.70, Ron: 10,  maxIc: 0.6 },
+};
+
+const TRANSISTOR_CUSTOM_FIELDS = [
+  { key: 'beta',  label: 'β (hFE gain)',          type: 'number', min: 1,     step: 1    },
+  { key: 'Vbe',   label: 'V_BE threshold (V)',    type: 'number', min: 0,     step: 0.01 },
+  { key: 'Ron',   label: 'Ron Base-Emitter (Ω)', type: 'number', min: 0.01,  step: 0.1  },
+  { key: 'maxIc', label: 'Max Collector I (A)',   type: 'number', min: 0,     step: 0.01 },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CAPACITOR
 // In DC steady-state (which our MNA solves) a capacitor is an open circuit.
@@ -96,20 +124,35 @@ export class NpnTransistorModel extends BaseComponent {
   get label() { return 'NPN Transistor'; }
   get category() { return 'Semiconductors'; }
   get numPins() { return 3; } // Base, Collector, Emitter
-  get defaultProperties() { return { beta: 100, Vbe: 0.7, Ron: 10, maxIc: 0.6 }; }
+  get defaultProperties() { return { modelId: '2N3904', useCustom: false, beta: 100, Vbe: 0.65, Ron: 10, maxIc: 0.2 }; }
   get propertyMeta() {
     return {
-      beta: { label: 'β (hFE gain)', type: 'number', min: 1 },
-      Vbe: { label: 'V_BE threshold (V)', type: 'number', min: 0 },
-      Ron: { label: 'Ron Base-Emitter (Ω)', type: 'number', min: 0.01 },
-      maxIc: { label: 'Max Collector I (A)', type: 'number', min: 0 }
+      modelId: {
+        type: 'model-select',
+        label: 'NPN Model',
+        options: Object.entries(NPN_MODELS).map(([k, v]) => ({ value: k, label: v.label })),
+        modelLibrary: NPN_MODELS,
+        customFields: TRANSISTOR_CUSTOM_FIELDS
+      }
     };
   }
   get color() { return '#34d399'; } // emerald
 
+  _resolveModel(properties) {
+    const preset = NPN_MODELS[properties.modelId] || NPN_MODELS['2N3904'];
+    if (!properties.useCustom) return preset;
+    return {
+      ...preset,
+      beta:  properties.beta  !== undefined ? properties.beta  : preset.beta,
+      Vbe:   properties.Vbe   !== undefined ? properties.Vbe   : preset.Vbe,
+      Ron:   properties.Ron   !== undefined ? properties.Ron   : preset.Ron,
+      maxIc: properties.maxIc !== undefined ? properties.maxIc : preset.maxIc,
+    };
+  }
+
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages) {
     if (componentState.properties.damaged) return;
-    const { beta, Vbe: Vbe_on, Ron } = componentState.properties;
+    const { beta, Vbe: Vbe_on, Ron } = this._resolveModel(componentState.properties);
     const pB = componentState.pins[0].id;
     const pC = componentState.pins[1].id;
     const pE = componentState.pins[2].id;
@@ -164,7 +207,7 @@ export class NpnTransistorModel extends BaseComponent {
 
   extractCurrent(componentState, nodeVoltages) {
     if (componentState.properties.damaged) return 0;
-    const { beta, Vbe: Vbe_on, Ron } = componentState.properties;
+    const { beta, Vbe: Vbe_on, Ron } = this._resolveModel(componentState.properties);
     const vB = nodeVoltages[componentState.pins[0].id] || 0;
     const vE = nodeVoltages[componentState.pins[2].id] || 0;
     const Vbe = vB - vE;
@@ -177,7 +220,7 @@ export class NpnTransistorModel extends BaseComponent {
 
   checkDamage(componentState, current, voltage) {
     if (componentState.properties.damaged) return false;
-    const maxIc = componentState.properties.maxIc ?? 0.6;
+    const { maxIc } = this._resolveModel(componentState.properties);
     if (current > maxIc) {
       return `Collector overcurrent: ${(current * 1000).toFixed(0)}mA exceeded ${(maxIc * 1000).toFixed(0)}mA max. Junction destroyed.`;
     }
@@ -236,10 +279,34 @@ export class PnpTransistorModel extends NpnTransistorModel {
   get type() { return 'PNP'; }
   get label() { return 'PNP Transistor'; }
   get color() { return '#f472b6'; } // pink
+  get defaultProperties() { return { modelId: '2N3906', useCustom: false, beta: 100, Vbe: 0.65, Ron: 10, maxIc: 0.2 }; }
+  get propertyMeta() {
+    return {
+      modelId: {
+        type: 'model-select',
+        label: 'PNP Model',
+        options: Object.entries(PNP_MODELS).map(([k, v]) => ({ value: k, label: v.label })),
+        modelLibrary: PNP_MODELS,
+        customFields: TRANSISTOR_CUSTOM_FIELDS
+      }
+    };
+  }
+
+  _resolveModel(properties) {
+    const preset = PNP_MODELS[properties.modelId] || PNP_MODELS['2N3906'];
+    if (!properties.useCustom) return preset;
+    return {
+      ...preset,
+      beta:  properties.beta  !== undefined ? properties.beta  : preset.beta,
+      Vbe:   properties.Vbe   !== undefined ? properties.Vbe   : preset.Vbe,
+      Ron:   properties.Ron   !== undefined ? properties.Ron   : preset.Ron,
+      maxIc: properties.maxIc !== undefined ? properties.maxIc : preset.maxIc,
+    };
+  }
 
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages) {
     if (componentState.properties.damaged) return;
-    const { beta, Vbe: Vbe_on, Ron } = componentState.properties;
+    const { beta, Vbe: Vbe_on, Ron } = this._resolveModel(componentState.properties);
     const pB = componentState.pins[0].id;
     const pC = componentState.pins[1].id;
     const pE = componentState.pins[2].id;
@@ -291,7 +358,7 @@ export class PnpTransistorModel extends NpnTransistorModel {
 
   extractCurrent(componentState, nodeVoltages) {
     if (componentState.properties.damaged) return 0;
-    const { beta, Vbe: Vbe_on, Ron } = componentState.properties;
+    const { beta, Vbe: Vbe_on, Ron } = this._resolveModel(componentState.properties);
     const vB = nodeVoltages[componentState.pins[0].id] || 0;
     const vE = nodeVoltages[componentState.pins[2].id] || 0;
     const Veb = vE - vB;

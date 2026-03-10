@@ -2,16 +2,24 @@ import BaseComponent from './BaseComponent.jsx';
 import React from 'react';
 
 export const DIODE_MODELS = {
-  '1N4148': { label: '1N4148 (Fast Diode)', Vf: 0.6, Ron: 0.1, type: 'diode' },
-  '1N4007': { label: '1N4007 (Rectifier)', Vf: 0.7, Ron: 0.05, type: 'diode' },
-  '1N4733A': { label: '1N4733A (5.1V Zener)', Vf: 0.7, Ron: 0.1, Vz: 5.1, type: 'zener' },
+  '1N4148':  { label: '1N4148 (Fast Diode)',    Vf: 0.6, Ron: 0.1,  type: 'diode' },
+  '1N4001':  { label: '1N4001 (Rectifier 50V)', Vf: 0.7, Ron: 0.08, type: 'diode' },
+  '1N4007':  { label: '1N4007 (Rectifier 1kV)', Vf: 0.7, Ron: 0.05, type: 'diode' },
+  'BAT43':   { label: 'BAT43 (Schottky)',        Vf: 0.3, Ron: 0.05, type: 'diode' },
+  '1N4733A': { label: '1N4733A (5.1V Zener)',   Vf: 0.7, Ron: 0.1,  Vz: 5.1, type: 'zener' },
+  '1N4740A': { label: '1N4740A (10V Zener)',    Vf: 0.7, Ron: 0.1,  Vz: 10,  type: 'zener' },
+  '1N4751A': { label: '1N4751A (30V Zener)',    Vf: 0.7, Ron: 0.1,  Vz: 30,  type: 'zener' },
+  'CUSTOM':  { label: 'Custom…',                Vf: 0.6, Ron: 0.1,  type: 'diode' },
 };
 
 export const LED_MODELS = {
-  'RED': { label: 'Red LED', Vf: 1.8, Ron: 0.1, color: '#ef4444', glow: 'rgba(239, 68, 68, 0.6)' },
-  'GREEN': { label: 'Green LED', Vf: 2.2, Ron: 0.1, color: '#22c55e', glow: 'rgba(34, 197, 94, 0.6)' },
-  'BLUE': { label: 'Blue LED', Vf: 3.2, Ron: 0.1, color: '#3b82f6', glow: 'rgba(59, 130, 246, 0.6)' },
-  'YELLOW': { label: 'Yellow LED', Vf: 2.1, Ron: 0.1, color: '#eab308', glow: 'rgba(234, 179, 8, 0.6)' },
+  'RED':     { label: 'Red LED',     Vf: 1.8, Ron: 0.1, color: '#ef4444', glow: 'rgba(239, 68, 68, 0.6)' },
+  'GREEN':   { label: 'Green LED',   Vf: 2.2, Ron: 0.1, color: '#22c55e', glow: 'rgba(34, 197, 94, 0.6)' },
+  'BLUE':    { label: 'Blue LED',    Vf: 3.2, Ron: 0.1, color: '#3b82f6', glow: 'rgba(59, 130, 246, 0.6)' },
+  'YELLOW':  { label: 'Yellow LED',  Vf: 2.1, Ron: 0.1, color: '#eab308', glow: 'rgba(234, 179, 8, 0.6)' },
+  'WHITE':   { label: 'White LED',   Vf: 3.4, Ron: 0.1, color: '#f8fafc', glow: 'rgba(248, 250, 252, 0.7)' },
+  'IR':      { label: 'IR LED',      Vf: 1.2, Ron: 0.1, color: '#7c3aed', glow: 'rgba(124, 58, 237, 0.5)' },
+  'CUSTOM':  { label: 'Custom…',     Vf: 2.0, Ron: 0.1, color: '#a855f7', glow: 'rgba(168, 85, 247, 0.6)' },
 };
 
 export class DiodeModel extends BaseComponent {
@@ -19,25 +27,41 @@ export class DiodeModel extends BaseComponent {
   get label() { return 'Diode'; }
   get category() { return 'Semiconductors'; }
   get numPins() { return 2; }
-  get defaultProperties() { return { modelId: '1N4148' }; }
+  get defaultProperties() { return { modelId: '1N4148', useCustom: false, Vf: 0.6, Ron: 0.1 }; }
   
-  // Custom metadata for PropertiesPanel to render a dropdown
   get propertyMeta() { 
     return {
       modelId: { 
-        type: 'select', 
+        type: 'model-select', 
         label: 'Diode Model', 
-        options: Object.entries(DIODE_MODELS).map(([k, v]) => ({ value: k, label: v.label })) 
+        options: Object.entries(DIODE_MODELS).map(([k, v]) => ({ value: k, label: v.label })),
+        modelLibrary: DIODE_MODELS,
+        customFields: [
+          { key: 'Vf',  label: 'Forward Voltage (V)', type: 'number', min: 0, step: 0.01 },
+          { key: 'Ron', label: 'On Resistance (Ω)',   type: 'number', min: 0.001, step: 0.01 },
+        ]
       }
     };
   }
 
   get color() { return '#9ca3af'; } // Grayish
 
+  // Pull effective model — merges preset with any user overrides
+  _resolveModel(properties) {
+    const preset = DIODE_MODELS[properties.modelId] || DIODE_MODELS['1N4148'];
+    if (!properties.useCustom) return preset;
+    return {
+      ...preset,
+      Vf:  properties.Vf  !== undefined ? properties.Vf  : preset.Vf,
+      Ron: properties.Ron !== undefined ? properties.Ron : preset.Ron,
+      ...(properties.Vz !== undefined ? { Vz: properties.Vz } : {}),
+    };
+  }
+
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages) {
     if (componentState.properties.damaged) return; // Burned out, open circuit
 
-    const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
+    const model = this._resolveModel(componentState.properties);
     const pA = componentState.pins[0].id;
     const pC = componentState.pins[1].id;
     const nA = resolvedNodeMap.get(pA) || 0;
@@ -76,7 +100,7 @@ export class DiodeModel extends BaseComponent {
   extractCurrent(componentState, nodeVoltages) {
     if (componentState.properties.damaged) return 0;
 
-    const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
+    const model = this._resolveModel(componentState.properties);
     const vA = nodeVoltages[componentState.pins[0].id] || 0;
     const vC = nodeVoltages[componentState.pins[1].id] || 0;
     const Vd = vA - vC;
@@ -91,7 +115,7 @@ export class DiodeModel extends BaseComponent {
 
   checkDamage(componentState, current, voltage) {
     if (componentState.properties.damaged) return false;
-    const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
+    const model = this._resolveModel(componentState.properties);
     const Vd = voltage; // we map voltage to Vd
     
     // Blows up if forward current > 1.5A or reverse voltage (non-zener) is extreme > 100V
@@ -107,7 +131,7 @@ export class DiodeModel extends BaseComponent {
   }
 
   renderShape(componentState) {
-    const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
+    const model = this._resolveModel(componentState.properties);
     const isZener = model.type === 'zener';
 
     return (
@@ -144,21 +168,36 @@ export class LedModel extends DiodeModel {
   get type() { return 'LED'; }
   get label() { return 'LED'; }
   get category() { return 'Output'; }
-  get defaultProperties() { return { modelId: 'RED' }; }
+  get defaultProperties() { return { modelId: 'RED', useCustom: false, Vf: 1.8, Ron: 0.1 }; }
   
   get propertyMeta() { 
     return {
       modelId: { 
-        type: 'select', 
-        label: 'Color', 
-        options: Object.entries(LED_MODELS).map(([k, v]) => ({ value: k, label: v.label })) 
+        type: 'model-select', 
+        label: 'LED Model', 
+        options: Object.entries(LED_MODELS).map(([k, v]) => ({ value: k, label: v.label })),
+        modelLibrary: LED_MODELS,
+        customFields: [
+          { key: 'Vf',  label: 'Forward Voltage (V)', type: 'number', min: 0, step: 0.01 },
+          { key: 'Ron', label: 'On Resistance (Ω)',   type: 'number', min: 0.001, step: 0.01 },
+        ]
       }
     };
   }
 
+  _resolveLedModel(properties) {
+    const preset = LED_MODELS[properties.modelId] || LED_MODELS['RED'];
+    if (!properties.useCustom) return preset;
+    return {
+      ...preset,
+      Vf:  properties.Vf  !== undefined ? properties.Vf  : preset.Vf,
+      Ron: properties.Ron !== undefined ? properties.Ron : preset.Ron,
+    };
+  }
+
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages) {
-    const model = LED_MODELS[componentState.properties.modelId] || LED_MODELS['RED'];
-    // Temporarily replace DIODE_MODELS mapped values with LED model for applyMNA
+    const model = this._resolveLedModel(componentState.properties);
+    // Temporarily stamp LED model into DIODE_MODELS for the parent applyMNA
     const originalModelId = componentState.properties.modelId;
     DIODE_MODELS['_TEMP_LED'] = model;
     componentState.properties.modelId = '_TEMP_LED';
@@ -170,7 +209,7 @@ export class LedModel extends DiodeModel {
   }
 
   extractCurrent(componentState, nodeVoltages) {
-    const model = LED_MODELS[componentState.properties.modelId] || LED_MODELS['RED'];
+    const model = this._resolveLedModel(componentState.properties);
     const originalModelId = componentState.properties.modelId;
     DIODE_MODELS['_TEMP_LED'] = model;
     componentState.properties.modelId = '_TEMP_LED';
@@ -191,7 +230,7 @@ export class LedModel extends DiodeModel {
   }
 
   renderShape(componentState, simulationCurrent) {
-    const model = LED_MODELS[componentState.properties.modelId] || LED_MODELS['RED'];
+    const model = this._resolveLedModel(componentState.properties);
     const isGlowing = simulationCurrent > 0.001; // > 1mA forward
     const brightness = Math.min(1, Math.max(0, simulationCurrent) * 20); // Scale up brightness
     const baseColor = model.color;

@@ -79,6 +79,16 @@ export function circuitReducer(state, action) {
         )
       };
 
+    case 'UPDATE_PROPERTIES_BATCH':
+      return {
+        ...state,
+        components: state.components.map(c =>
+          c.id === action.payload.id
+            ? { ...c, properties: { ...c.properties, ...action.payload.updates } }
+            : c
+        )
+      };
+
     case 'SET_SELECTED':
       return { ...state, selectedElementId: action.payload };
 
