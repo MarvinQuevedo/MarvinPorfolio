@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect } from 'react';
+import React, { useReducer, useEffect, useState } from 'react';
 import './App.css';
 import { circuitReducer, initialState } from './store/circuitReducer';
 import { createComponent, registry } from './core/ComponentDefs';
@@ -8,9 +8,11 @@ import Canvas from './components/Canvas';
 import ComponentNode from './components/ComponentNode';
 import WireNode from './components/WireNode';
 import PropertiesPanel from './components/PropertiesPanel';
+import ExamplesGallery from './components/ExamplesGallery';
 
 function App() {
   const [state, dispatch] = useReducer(circuitReducer, initialState);
+  const [showExamples, setShowExamples] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -121,6 +123,7 @@ function App() {
             />
             Damage Physics
           </label>
+          <button className="tb-btn" onClick={() => setShowExamples(true)}>🔬 Examples</button>
           <button className="tb-btn" onClick={handleSave}>Save</button>
           <button className="tb-btn" onClick={handleLoad}>Load</button>
           <button className="tb-btn sim-btn" onClick={() => dispatch({ type: 'TOGGLE_SIMULATION' })}>
@@ -175,6 +178,13 @@ function App() {
           />
         )}
       </div>
+
+      {showExamples && (
+        <ExamplesGallery
+          onLoad={(circuit) => dispatch({ type: 'LOAD_CIRCUIT', payload: circuit })}
+          onClose={() => setShowExamples(false)}
+        />
+      )}
     </div>
   );
 }
