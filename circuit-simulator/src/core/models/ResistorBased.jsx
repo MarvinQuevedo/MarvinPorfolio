@@ -1,4 +1,4 @@
-import BaseComponent from './BaseComponent';
+import BaseComponent from './BaseComponent.jsx';
 import React from 'react';
 
 export class ResistorModel extends BaseComponent {
@@ -6,12 +6,17 @@ export class ResistorModel extends BaseComponent {
   get label() { return 'Resistor'; }
   get category() { return 'Passive'; }
   get numPins() { return 2; }
-  get defaultProperties() { return { resistance: 1000 }; }
-  get propertyLabels() { return { resistance: 'Resistance (Ω)' }; }
+  get defaultProperties() { return { resistance: 1000, maxPower: 0.25 }; }
+  get propertyMeta() { 
+    return { 
+      resistance: { label: 'Resistance (Ω)', type: 'number' },
+      maxPower: { label: 'Max Power (W)', type: 'number', min: 0 }
+    }; 
+  }
   get color() { return '#f59e0b'; }
 
   applyMNA(A, Z, componentState, finalNodeMap) {
-    let r = componentState.properties.resistance || 1000;
+    let r = componentState.properties.damaged ? 1e9 : (componentState.properties.resistance || 1000);
     // Prevent division by zero
     if (r < 1e-6) r = 1e-6; 
     
@@ -28,11 +33,24 @@ export class ResistorModel extends BaseComponent {
   }
 
   extractCurrent(componentState, nodeVoltages) {
-    let r = componentState.properties.resistance || 1000;
+    let r = componentState.properties.damaged ? 1e9 : (componentState.properties.resistance || 1000);
     if (r < 1e-6) r = 1e-6;
     const v1 = nodeVoltages[componentState.pins[0].id] || 0;
     const v2 = nodeVoltages[componentState.pins[1].id] || 0;
     return (v1 - v2) / r;
+  }
+
+  checkDamage(componentState, current, voltage) {
+    if (componentState.properties.damaged) return false;
+    const r = componentState.properties.resistance || 1000;
+    const maxP = componentState.properties.maxPower ?? 0.25;
+    
+    // Calculate wattage
+    const power = current * current * r;
+    if (power > maxP) {
+      return `Power exceeded limit (${maxP}W max). ${(power).toFixed(2)}W dissipated.`;
+    }
+    return false;
   }
 
   renderShape() {
@@ -52,8 +70,12 @@ export class SwitchModel extends ResistorModel {
   get type() { return 'SWITCH'; }
   get label() { return 'Switch'; }
   get category() { return 'Interactive'; }
-  get defaultProperties() { return { closed: false }; }
-  get propertyLabels() { return {}; }
+  get defaultProperties() { return { closed: false, maxCurrent: 15 }; }
+  get propertyMeta() { 
+    return {
+      maxCurrent: { label: 'Max Current (A)', type: 'number', min: 0 }
+    }; 
+  }
   get color() { return '#a8a29e'; }
 
   applyMNA(A, Z, componentState, finalNodeMap) {
@@ -70,6 +92,15 @@ export class SwitchModel extends ResistorModel {
     const ans = super.extractCurrent(componentState, nodeVoltages);
     componentState.properties.resistance = originalR;
     return ans;
+  }
+
+  checkDamage(componentState, current, voltage) {
+    if (componentState.properties.damaged) return false;
+    const maxI = componentState.properties.maxCurrent ?? 15;
+    if (current > maxI) {
+      return `Overcurrent: ${(current).toFixed(2)}A exceeded maximum switch rating of ${maxI}A. Contacts melted.`;
+    }
+    return false;
   }
 
   renderShape(componentState) {
@@ -102,8 +133,13 @@ export class BulbModel extends ResistorModel {
   get type() { return 'BULB'; }
   get label() { return 'Light Bulb'; }
   get category() { return 'Output'; }
-  get defaultProperties() { return { resistance: 100 }; }
-  get propertyLabels() { return { resistance: 'Resistance (Ω)' }; }
+  get defaultProperties() { return { resistance: 100, maxPower: 2.5 }; }
+  get propertyMeta() { 
+    return { 
+      resistance: { label: 'Resistance (Ω)', type: 'number' },
+      maxPower: { label: 'Max Power (W)', type: 'number', min: 0 }
+    }; 
+  }
   get color() { return '#fbbf24'; }
 
   renderShape(componentState, simulationCurrent) {
@@ -117,6 +153,18 @@ export class BulbModel extends ResistorModel {
         <path d="M -8 5 L -4 -5 L 4 5 L 8 -5" fill="none" stroke={this.color} strokeWidth="2" />
       </g>
     );
+  }
+
+  checkDamage(componentState, current, voltage) {
+    if (componentState.properties.damaged) return false;
+    const r = componentState.properties.resistance || 100;
+    const maxP = componentState.properties.maxPower ?? 2.5;
+
+    const power = current * current * r;
+    if (power > maxP) {
+      return `Power exceeded limit (${maxP}W max). ${(power).toFixed(2)}W dissipated, causing filament to burn out.`;
+    }
+    return false; 
   }
 
   renderIcon() {

@@ -1,7 +1,7 @@
 import React, { useReducer, useEffect } from 'react';
 import './App.css';
 import { circuitReducer, initialState } from './store/circuitReducer';
-import { createComponent } from './core/ComponentDefs';
+import { createComponent, registry } from './core/ComponentDefs';
 import { simulateCircuit } from './core/Solver';
 import Sidebar from './components/Sidebar';
 import Canvas from './components/Canvas';
@@ -32,14 +32,37 @@ function App() {
     if (state.isSimulating) {
       try {
         const results = simulateCircuit(state.components, state.wires);
-        dispatch({ type: 'SET_SIMULATION_RESULTS', payload: results });
+        
+        let newlyDamagedIds = [];
+        if (state.enableDamage) {
+          state.components.forEach(comp => {
+            if (comp.properties.damaged) return;
+            const model = registry.get(comp.type);
+            if (model && model.checkDamage) {
+              const current = Math.abs(results.branchCurrents[comp.id] || 0);
+              const vA = results.nodeVoltages[comp.pins[0]?.id] || 0;
+              const vB = results.nodeVoltages[comp.pins[1]?.id] || 0;
+              const reason = model.checkDamage(comp, current, vA - vB);
+              if (reason) {
+                newlyDamagedIds.push({ id: comp.id, reason });
+              }
+            }
+          });
+        }
+        
+        if (newlyDamagedIds.length > 0) {
+          dispatch({ type: 'APPLY_DAMAGE', payload: newlyDamagedIds });
+          // state update will trigger a re-run of this hook next render
+        } else {
+          dispatch({ type: 'SET_SIMULATION_RESULTS', payload: results });
+        }
       } catch (err) {
         console.error("Simulation error", err);
       }
     } else {
       dispatch({ type: 'SET_SIMULATION_RESULTS', payload: { nodeVoltages: {}, branchCurrents: {} } });
     }
-  }, [state.isSimulating, state.components, state.wires]);
+  }, [state.isSimulating, state.components, state.wires, state.enableDamage]);
 
   const handleSave = () => {
     const data = JSON.stringify({ components: state.components, wires: state.wires });
@@ -90,6 +113,14 @@ function App() {
           <span style={{color: 'var(--accent-color)'}}>⚡</span> Circuit Simulator
         </h1>
         <div style={{ display: 'flex', gap: '10px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            <input 
+              type="checkbox" 
+              checked={state.enableDamage} 
+              onChange={() => dispatch({ type: 'TOGGLE_DAMAGE' })} 
+            />
+            Damage Physics
+          </label>
           <button className="tb-btn" onClick={handleSave}>Save</button>
           <button className="tb-btn" onClick={handleLoad}>Load</button>
           <button className="tb-btn sim-btn" onClick={() => dispatch({ type: 'TOGGLE_SIMULATION' })}>

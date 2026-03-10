@@ -1,4 +1,4 @@
-import BaseComponent from './BaseComponent';
+import BaseComponent from './BaseComponent.jsx';
 import React from 'react';
 
 export const DIODE_MODELS = {
@@ -35,6 +35,8 @@ export class DiodeModel extends BaseComponent {
   get color() { return '#9ca3af'; } // Grayish
 
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages) {
+    if (componentState.properties.damaged) return; // Burned out, open circuit
+
     const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
     const pA = componentState.pins[0].id;
     const pC = componentState.pins[1].id;
@@ -72,6 +74,8 @@ export class DiodeModel extends BaseComponent {
   }
 
   extractCurrent(componentState, nodeVoltages) {
+    if (componentState.properties.damaged) return 0;
+
     const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
     const vA = nodeVoltages[componentState.pins[0].id] || 0;
     const vC = nodeVoltages[componentState.pins[1].id] || 0;
@@ -83,6 +87,23 @@ export class DiodeModel extends BaseComponent {
       return (Vd + model.Vz) / model.Ron; // Negative current
     }
     return Vd * 1e-9; 
+  }
+
+  checkDamage(componentState, current, voltage) {
+    if (componentState.properties.damaged) return false;
+    const model = DIODE_MODELS[componentState.properties.modelId] || DIODE_MODELS['1N4148'];
+    const Vd = voltage; // we map voltage to Vd
+    
+    // Blows up if forward current > 1.5A or reverse voltage (non-zener) is extreme > 100V
+    if (current > 1.5) return `Overcurrent: ${(current).toFixed(2)}A exceeded maximum 1.5A rating.`;
+    if (model.type !== 'zener' && Vd < -100) return `Reverse breakdown: Extrapolated ${(-Vd).toFixed(1)}V exceeds Max Reverse Voltage (100V).`;
+    
+    // Zener blows up if dissipating too much power (e.g. > 1W)
+    if (model.type === 'zener' && Vd < 0 && Math.abs(current * Vd) > 1.0) {
+      return `Power dissipation limit: ${Math.abs(current * Vd).toFixed(2)}W dissipated in Zener breakdown (>1W).`;
+    }
+
+    return false;
   }
 
   renderShape(componentState) {
@@ -159,6 +180,14 @@ export class LedModel extends DiodeModel {
     componentState.properties.modelId = originalModelId;
     delete DIODE_MODELS['_TEMP_LED'];
     return ans;
+  }
+
+  checkDamage(componentState, current, voltage) {
+    if (componentState.properties.damaged) return false;
+    // An LED blows up if forward current > 50mA or reverse voltage > 5V
+    if (current > 0.05) return `Overcurrent fatal: ${(current * 1000).toFixed(1)}mA exceeded the 50mA maximum limit for LEDs.`; 
+    if (voltage < -6) return `Reverse voltage fatal: Reversed ${Math.abs(voltage).toFixed(1)}V broke through the fragile 6V limit.`; 
+    return false;
   }
 
   renderShape(componentState, simulationCurrent) {

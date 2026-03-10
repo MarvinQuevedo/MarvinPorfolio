@@ -1,4 +1,4 @@
-import BaseComponent from './BaseComponent';
+import BaseComponent from './BaseComponent.jsx';
 import React from 'react';
 
 export class DcVoltageSourceModel extends BaseComponent {

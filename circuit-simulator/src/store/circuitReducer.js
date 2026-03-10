@@ -3,6 +3,7 @@ export const initialState = {
   wires: [],
   selectedElementId: null,
   isSimulating: false,
+  enableDamage: true,
   simulationResults: {
     nodeVoltages: {}, // pinId -> voltage
     branchCurrents: {} // compId -> current
@@ -95,7 +96,47 @@ export function circuitReducer(state, action) {
       return { ...state, simulationResults: action.payload };
 
     case 'TOGGLE_SIMULATION':
-      return { ...state, isSimulating: !state.isSimulating };
+      return { 
+        ...state, 
+        isSimulating: !state.isSimulating,
+        components: state.components.map(c => 
+          c.properties && c.properties.damaged
+            ? { ...c, properties: { ...c.properties, damaged: false, damageReason: undefined } }
+            : c
+        )
+      };
+
+    case 'TOGGLE_DAMAGE':
+      return { ...state, enableDamage: !state.enableDamage };
+
+    case 'APPLY_DAMAGE':
+      return {
+        ...state,
+        components: state.components.map(c => {
+          const damageInfo = action.payload.find(d => d.id === c.id);
+          if (damageInfo) {
+            return { 
+              ...c, 
+              properties: { 
+                ...c.properties, 
+                damaged: true, 
+                damageReason: damageInfo.reason 
+              } 
+            };
+          }
+          return c;
+        })
+      };
+
+    case 'REPAIR_COMPONENT':
+      return {
+        ...state,
+        components: state.components.map(c => 
+          c.id === action.payload
+            ? { ...c, properties: { ...c.properties, damaged: false, damageReason: undefined } } 
+            : c
+        )
+      };
 
     case 'LOAD_CIRCUIT':
       return { ...initialState, ...action.payload };

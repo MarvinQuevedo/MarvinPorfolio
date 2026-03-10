@@ -44,4 +44,20 @@ export default class BaseComponent {
   extractCurrent(componentState, nodeVoltages, extraVarValues) {
     return 0; // Default zero current if not simulated
   }
+
+  // Determines if the component should be destroyed based on current or voltage limits
+  checkDamage(componentState, current, voltage) {
+    return false; // By default indestructible
+  }
+
+  // Returns SVG for a damaged component (burn mark or explosion)
+  renderDamageOverlay() {
+    return (
+      <g>
+        <circle cx="0" cy="0" r="12" fill="rgba(0,0,0,0.8)" stroke="#ef4444" strokeWidth="2" />
+        <path d="M -5 -5 L 5 5 M 5 -5 L -5 5" stroke="#ef4444" strokeWidth="3" />
+        <text x="0" y="-15" fill="#ef4444" fontSize="10" fontWeight="bold" textAnchor="middle">BURNED</text>
+      </g>
+    );
+  }
 }

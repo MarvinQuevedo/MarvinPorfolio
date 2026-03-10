@@ -69,14 +69,23 @@ export default function ComponentNode({
 
   const renderShape = () => {
     const model = registry.get(type);
-    if (model) {
-      return model.renderShape(component, simulationCurrent);
-    }
-    return null;
+    if (!model) return null;
+
+    return (
+      <g>
+        {model.renderShape(component, simulationCurrent)}
+        {component.properties.damaged && model.renderDamageOverlay && model.renderDamageOverlay()}
+      </g>
+    );
   };
 
   let tooltipText = def ? def.label : 'Component';
-  if (isSimulating && simulationCurrent !== undefined) {
+  if (component.properties.damaged) {
+    tooltipText += '\n[DAMAGED/BLOWN]';
+    if (component.properties.damageReason) {
+      tooltipText += `\n${component.properties.damageReason}`;
+    }
+  } else if (isSimulating && simulationCurrent !== undefined) {
     const i = Math.abs(simulationCurrent);
     if (i < 0.001) tooltipText += `\nCurrent: ${(i * 1000000).toFixed(2)} µA`;
     else if (i < 1) tooltipText += `\nCurrent: ${(i * 1000).toFixed(2)} mA`;
