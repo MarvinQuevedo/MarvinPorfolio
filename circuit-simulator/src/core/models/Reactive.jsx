@@ -92,6 +92,12 @@ export class CapacitorModel extends BaseComponent {
     return C * (V_curr - vCap) / Math.max(dt, 1e-6);
   }
 
+  getUpdatedProperties(componentState, nodeVoltages) {
+    const vA = nodeVoltages[componentState.pins[0].id] || 0;
+    const vB = nodeVoltages[componentState.pins[1].id] || 0;
+    return { vCap: vA - vB };
+  }
+
   checkDamage(componentState, current, voltage) {
     if (componentState.properties.damaged) return false;
     const maxV = componentState.properties.maxVoltage ?? 50;

@@ -18,6 +18,57 @@ function App() {
   const [watchedPins, setWatchedPins] = useState([]);
   const debugHistoryRef = useRef([]);
   const simTimeRef = useRef(0);
+  const simResultsRef = useRef({ nodeVoltages: {}, branchCurrents: {} });
+
+  // Expose API for console debugging
+  useEffect(() => {
+    window.simulator = {
+      state: state,
+      dispatch: dispatch,
+      toggle: (idOrType) => {
+        const comp = state.components.find(c => c.id === idOrType || c.type === idOrType);
+        if (comp) dispatch({ type: 'TOGGLE_SWITCH', payload: comp.id });
+      },
+      getVoltages: () => simResultsRef.current.nodeVoltages,
+      getComponents: () => state.components,
+      help: () => {
+        console.log("%cCircuit Simulator API", "color: #60a5fa; font-weight: bold; font-size: 1.2rem;");
+        console.log("Usage:");
+        console.log("  simulator.toggle('sw_a')   - Toggle switch by ID or type");
+        console.log("  simulator.getVoltages()    - Get all node voltages");
+        console.log("  simulator.logDigital()     - Print logic levels of all digital components");
+        console.log("  simulator.state            - Full internal state");
+      },
+      logDigital: () => {
+        const digital = state.components.filter(c => c.category === 'Digital' || c.type.includes('GATE'));
+        console.table(digital.map(c => ({
+          ID: c.id,
+          Type: c.type,
+          State: registry.get(c.type)?.getDebugState(c, simResultsRef.current.nodeVoltages) || 'N/A'
+        })));
+      },
+      inspect: (id) => {
+        const comp = state.components.find(c => c.id === id);
+        if (!comp) return console.error("Component not found");
+        console.log(`%cInspecting ${comp.type} [${comp.id}]`, "color: #fbbf24; font-weight: bold;");
+        console.dir(comp);
+        console.log("Current Voltages:", comp.pins.map(p => ({ Pin: p.label || p.index, V: simResultsRef.current.nodeVoltages[p.id] })));
+      },
+      logCounters: () => {
+        const counters = state.components.filter(c => c.type === 'COUNTER_4BIT');
+        console.table(counters.map(c => ({
+          ID: c.id,
+          Count: c.properties.count,
+          CLK: simResultsRef.current.nodeVoltages[c.pins[0].id]?.toFixed(2) + 'V',
+          OVF: simResultsRef.current.nodeVoltages[c.pins[7].id]?.toFixed(2) + 'V',
+        })));
+      }
+    };
+  }, [state, dispatch]);
+
+  useEffect(() => {
+    simResultsRef.current = state.simulationResults;
+  }, [state.simulationResults]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -68,19 +119,36 @@ function App() {
         let currentResults = null;
         let newlyDamagedIds = [];
         let cumulativeUpdates = {};
+        // Transient state to track property changes across sub-steps within a single frame
+        let transientPropsMap = new Map();
 
         // Use current refs to get the latest state
-        const components = componentsRef.current;
+        const originalComponents = componentsRef.current;
         const wires = wiresRef.current;
 
         for (let i = 0; i < subSteps; i++) {
-          const results = simulateCircuit(components, wires, dt);
+          // Create a virtual view of components with updates from previous sub-steps applied
+          const currentComponents = originalComponents.map(c => ({
+            ...c,
+            properties: transientPropsMap.has(c.id) 
+              ? { ...c.properties, ...transientPropsMap.get(c.id) } 
+              : c.properties
+          }));
+
+          const results = simulateCircuit(currentComponents, wires, dt);
           currentResults = results;
           
-          Object.assign(cumulativeUpdates, results.updatedComponentProperties);
+          if (results.updatedComponentProperties) {
+            for (const [id, props] of Object.entries(results.updatedComponentProperties)) {
+              const existing = transientPropsMap.get(id) || {};
+              const merged = { ...existing, ...props };
+              transientPropsMap.set(id, merged);
+              cumulativeUpdates[id] = merged;
+            }
+          }
 
           if (enableDamageRef.current) {
-            components.forEach(comp => {
+            currentComponents.forEach(comp => {
               if (comp.properties.damaged || newlyDamagedIds.some(d => d.id === comp.id)) return;
               const model = registry.get(comp.type);
               if (model && model.checkDamage) {
@@ -94,13 +162,6 @@ function App() {
           }
           
           if (newlyDamagedIds.length > 0) break;
-          
-          // Apply transient updates (vCap) in-place for the next sub-step
-          components.forEach(c => {
-              if (results.updatedComponentProperties[c.id]) {
-                  Object.assign(c.properties, results.updatedComponentProperties[c.id]);
-              }
-          });
         }
         
         if (newlyDamagedIds.length > 0) {
@@ -114,8 +175,12 @@ function App() {
           history.push({ time: simTimeRef.current, nodeVoltages: { ...currentResults.nodeVoltages } });
           if (history.length > 300) history.splice(0, history.length - 300);
 
-          // This dispatch will trigger a re-render and also update componentsRef (via the other useEffect)
-          dispatch({ type: 'SIMULATION_TICK', payload: { results: currentResults } });
+          // Use cumulative updates so no state change is lost between frames
+          const finalResults = { 
+            ...currentResults, 
+            updatedComponentProperties: cumulativeUpdates 
+          };
+          dispatch({ type: 'SIMULATION_TICK', payload: { results: finalResults } });
         }
       } catch (err) {
         console.error("Simulation error", err);
@@ -225,10 +290,14 @@ function App() {
               onMove={(id, x, y) => dispatch({ type: 'MOVE_COMPONENT', payload: { id, x, y } })}
               onRotate={(id) => dispatch({ type: 'ROTATE_COMPONENT', payload: id })}
               onInteract={(id) => dispatch({ type: 'TOGGLE_SWITCH', payload: id })}
+              onPress={(id) => dispatch({ type: 'SET_SWITCH_STATE', payload: { id, closed: true } })}
+              onRelease={(id) => dispatch({ type: 'SET_SWITCH_STATE', payload: { id, closed: false } })}
               wiringHandlers={wiringHandlers}
               simulationCurrent={state.simulationResults.branchCurrents[comp.id] || 0}
               isSimulating={state.isSimulating}
               zoom={zoom}
+              showProbes={showDebugger}
+              nodeVoltages={state.simulationResults.nodeVoltages}
             />
           )}
           renderWire={(wire, zoom) => (

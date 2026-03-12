@@ -204,11 +204,10 @@ export function simulateCircuit(components, wires, dt = 0.005) {
       const current = model.extractCurrent(c, nodeVoltages, extraVars, dt);
       branchCurrents[c.id] = current;
       
-      // Update internal state for transient components
-      if (c.type === 'CAPACITOR') {
-          const vA = nodeVoltages[c.pins[0].id] || 0;
-          const vB = nodeVoltages[c.pins[1].id] || 0;
-          updatedComponentProperties[c.id] = { vCap: vA - vB };
+      // Update internal state
+      const updates = model.getUpdatedProperties(c, nodeVoltages, extraVars, dt);
+      if (updates) {
+        updatedComponentProperties[c.id] = updates;
       }
     }
   });

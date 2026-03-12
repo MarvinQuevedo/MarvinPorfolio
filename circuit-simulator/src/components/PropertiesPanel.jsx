@@ -246,6 +246,23 @@ export default function PropertiesPanel({ elementId, components, wires, dispatch
             );
           }
 
+          // ── boolean type ──
+          if (fieldMeta.type === 'boolean' || typeof val === 'boolean') {
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={val}
+                  onChange={e => dispatch({ type: 'UPDATE_PROPERTY', payload: { id: component.id, key, value: e.target.checked } })}
+                  id={`prop-${key}`}
+                />
+                <label htmlFor={`prop-${key}`} style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  {fieldMeta.label || fieldMeta}
+                </label>
+              </div>
+            );
+          }
+
           // ── number / text type ──
           return (
             <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>

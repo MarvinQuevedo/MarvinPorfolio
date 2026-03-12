@@ -129,6 +129,34 @@ export class SwitchModel extends ResistorModel {
   }
 }
 
+export class PushbuttonModel extends SwitchModel {
+  get type() { return 'PUSH_BUTTON'; }
+  get label() { return 'Push Button'; }
+  get category() { return 'Interactive'; }
+  get color() { return '#f87171'; }
+
+  renderShape(componentState) {
+    const closed = componentState.properties.closed;
+    return (
+      <g>
+        <rect x="-20" y="-12" width="40" height="24" fill="#333" stroke={this.color} strokeWidth="2" rx="2" />
+        <circle cx="0" cy="0" r={closed ? 8 : 10} fill={this.color} style={{ transition: 'all 0.1s' }} />
+        <line x1="-30" y1="0" x2="-20" y2="0" stroke={this.color} strokeWidth="3" />
+        <line x1="20" y1="0" x2="30" y2="0" stroke={this.color} strokeWidth="3" />
+      </g>
+    );
+  }
+
+  renderIcon() {
+    return (
+      <g>
+        <rect x="-20" y="-12" width="40" height="24" fill="none" stroke={this.color} strokeWidth="3" rx="2" />
+        <circle cx="0" cy="0" r="8" fill={this.color} />
+      </g>
+    );
+  }
+}
+
 export class BulbModel extends ResistorModel {
   get type() { return 'BULB'; }
   get label() { return 'Light Bulb'; }

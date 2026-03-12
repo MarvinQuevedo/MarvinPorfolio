@@ -11,6 +11,11 @@ export default class BaseComponent {
   get propertyLabels() { return {}; }
   get color() { return '#ffffff'; }
 
+  // Returns { minX, minY, maxX, maxY } relative to component origin
+  getBounds() {
+    return { minX: -40, minY: -30, maxX: 40, maxY: 30 };
+  }
+
   // Returns extra variables needed for MNA (e.g., Voltage sources need 1)
   getExtraVariablesCount() {
     return 0;
@@ -45,9 +50,20 @@ export default class BaseComponent {
     return 0; // Default zero current if not simulated
   }
 
+  // Allows components to update their internal properties (state) after a simulation step
+  // returns an object with the properties to be updated
+  getUpdatedProperties(componentState, nodeVoltages, extraVarValues, dt) {
+    return null;
+  }
+
   // Determines if the component should be destroyed based on current or voltage limits
   checkDamage(componentState, current, voltage) {
     return false; // By default indestructible
+  }
+
+  // Returns a string or React element summarizing the current physical/logic state
+  getDebugState(componentState, nodeVoltages, branchCurrents) {
+    return null;
   }
 
   // Returns SVG for a damaged component (burn mark or explosion)

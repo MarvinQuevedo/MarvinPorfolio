@@ -8,10 +8,14 @@ export default function ComponentNode({
   onMove, 
   onRotate,
   onInteract,
+  onPress,
+  onRelease,
   wiringHandlers,
   simulationCurrent,
   isSimulating,
-  zoom = 1
+  zoom = 1,
+  showProbes = false,
+  nodeVoltages = {}
 }) {
   const { id, type, x, y, rotation, pins } = component;
   const def = COMPONENT_DEFINITIONS[type];
@@ -25,7 +29,11 @@ export default function ComponentNode({
     if (e.button !== 0) return;
     onSelect(id);
     setDragOffset({ x: e.clientX, y: e.clientY });
-    if (!isSimulating) {
+
+    if (isSimulating && type === 'PUSH_BUTTON') {
+      if (onPress) onPress(id);
+      e.target.setPointerCapture(e.pointerId);
+    } else if (!isSimulating) {
       setIsDragging(true);
       e.target.setPointerCapture(e.pointerId);
     }
@@ -37,32 +45,34 @@ export default function ComponentNode({
       const dx = (e.clientX - dragOffset.x) / zoom;
       const dy = (e.clientY - dragOffset.y) / zoom;
       
-      // Calculate continuous new pos, snapping on render or state update
-      const newX = x + dx;
-      const newY = y + dy;
+      const snappedX = Math.round((x + dx) / 20) * 20;
+      const snappedY = Math.round((y + dy) / 20) * 20;
       
-      const snappedX = Math.round(newX / 20) * 20;
-      const snappedY = Math.round(newY / 20) * 20;
-      
-      // Only fire move if actually changed snapped grid
       if (snappedX !== x || snappedY !== y) {
         onMove(id, snappedX, snappedY);
-        setDragOffset({ x: e.clientX, y: e.clientY }); // Reset origin to avoid drift
+        setDragOffset({ x: e.clientX, y: e.clientY });
       }
     }
   };
 
   const handlePointerUp = (e) => {
-    setIsDragging(false);
+    if (isSimulating && type === 'PUSH_BUTTON') {
+      if (onRelease) onRelease(id);
+      try { e.target.releasePointerCapture(e.pointerId); } catch(e) {}
+    }
+
     if (!isSimulating) {
-      e.target.releasePointerCapture(e.pointerId);
+      setIsDragging(false);
+      try { e.target.releasePointerCapture(e.pointerId); } catch(e) {}
     }
 
     const dx = e.clientX - dragOffset.x;
     const dy = e.clientY - dragOffset.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     
-    if (dist < 5 && onInteract) {
+    // For PUSH_BUTTON in simulation, we don't want to toggle (onInteract)
+    const isMomentarySim = isSimulating && type === 'PUSH_BUTTON';
+    if (dist < 5 && onInteract && !isMomentarySim) {
       onInteract(id);
     }
   };
@@ -73,7 +83,7 @@ export default function ComponentNode({
 
     return (
       <g>
-        {model.renderShape(component, simulationCurrent)}
+        {model.renderShape(component, simulationCurrent, nodeVoltages)}
         {component.properties.damaged && model.renderDamageOverlay && model.renderDamageOverlay()}
       </g>
     );
@@ -92,27 +102,34 @@ export default function ComponentNode({
     else tooltipText += `\nCurrent: ${(i).toFixed(3)} A`;
   }
 
+  const model = registry.get(type);
+  const bounds = model ? model.getBounds() : { minX: -40, minY: -30, maxX: 40, maxY: 30 };
+
   return (
     <g 
       transform={`translate(${x}, ${y}) rotate(${rotation})`}
       style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
     >
       <rect 
-        x="-40" y="-30" width="80" height="60" 
+        x={bounds.minX} y={bounds.minY} width={bounds.maxX - bounds.minX} height={bounds.maxY - bounds.minY} 
         fill="transparent" 
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
       >
         <title>{tooltipText}</title>
       </rect>
       {isSelected && (
         <g>
-          <rect x="-35" y="-30" width="70" height="60" fill="none" stroke="var(--accent-color)" strokeWidth="1" strokeDasharray="4 2" />
+          <rect 
+            x={bounds.minX + 5} y={bounds.minY} 
+            width={bounds.maxX - bounds.minX - 10} height={bounds.maxY - bounds.minY} 
+            fill="none" stroke="var(--accent-color)" strokeWidth="1" strokeDasharray="4 2" 
+          />
           {/* Quick rotate button rendered above bounding box, scale down since it's SVG */}
           {!isSimulating && (
             <g 
-              transform="translate(25, -45)" 
+              transform={`translate(${bounds.maxX - 10}, ${bounds.minY - 15})`} 
               style={{ cursor: 'pointer' }}
               onPointerDown={(e) => {
                 e.stopPropagation();
@@ -126,30 +143,60 @@ export default function ComponentNode({
         </g>
       )}
       {renderShape()}
+      {component.properties.label && (
+        <text
+          x="0" y={bounds.maxY + 15}
+          fill="var(--text-secondary)"
+          fontSize="10"
+          textAnchor="middle"
+          style={{ pointerEvents: 'none', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+        >
+          {component.properties.label}
+        </text>
+      )}
       {pins.map((pin) => (
-        <circle 
-          key={pin.id}
-          cx={pin.offsetX} 
-          cy={pin.offsetY} 
-          r="6" 
-          fill={wiringStartPin?.pinId === pin.id ? "var(--wire-active)" : "var(--wire-color)"}
-          stroke="var(--bg-color)"
-          strokeWidth="2"
-          className="component-pin"
-          style={{ cursor: isSimulating ? 'not-allowed' : 'crosshair', transition: 'fill 0.2s', opacity: isSimulating ? 0 : 1 }}
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            if (e.button !== 0 || isSimulating) return;
-            const rad = rotation * Math.PI / 180;
-            const absX = x + pin.offsetX * Math.cos(rad) - pin.offsetY * Math.sin(rad);
-            const absY = y + pin.offsetX * Math.sin(rad) + pin.offsetY * Math.cos(rad);
-            startWiring(pin.id, absX, absY);
-          }}
-          onPointerUp={(e) => {
-            e.stopPropagation();
-            if (wiringStartPin) finishWiring(pin.id);
-          }}
-        />
+        <g key={pin.id}>
+          <circle 
+            cx={pin.offsetX} 
+            cy={pin.offsetY} 
+            r="6" 
+            fill={wiringStartPin?.pinId === pin.id ? "var(--wire-active)" : "var(--wire-color)"}
+            stroke="var(--bg-color)"
+            strokeWidth="2"
+            className="component-pin"
+            style={{ cursor: isSimulating ? 'not-allowed' : 'crosshair', transition: 'fill 0.2s', opacity: (isSimulating && !pin.label) ? 0 : 1 }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (e.button !== 0 || isSimulating) return;
+              const rad = rotation * Math.PI / 180;
+              const absX = x + pin.offsetX * Math.cos(rad) - pin.offsetY * Math.sin(rad);
+              const absY = y + pin.offsetX * Math.sin(rad) + pin.offsetY * Math.cos(rad);
+              startWiring(pin.id, absX, absY);
+            }}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              if (wiringStartPin) finishWiring(pin.id);
+            }}
+          />
+          {pin.label && (
+            <text 
+              x={pin.offsetX} 
+              y={pin.offsetY + (pin.offsetY > 0 ? 12 : -8)} 
+              fill="var(--text-secondary)" 
+              fontSize="8" 
+              textAnchor="middle"
+              style={{ pointerEvents: 'none', opacity: isSimulating ? 0.4 : 1 }}
+            >
+              {pin.label}
+            </text>
+          )}
+          {showProbes && nodeVoltages && (
+            <g transform={`translate(${pin.offsetX + (pin.offsetX > 0 ? 10 : -10)}, ${pin.offsetY})`}>
+               <rect x="-5" y="-6" width="10" height="12" rx="2" fill={nodeVoltages[pin.id] > 2.0 ? "#ef4444" : "#1e40af"} opacity="0.8" />
+               <text y="3" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold">{nodeVoltages[pin.id] > 2.0 ? '1' : '0'}</text>
+            </g>
+          )}
+        </g>
       ))}
     </g>
   );

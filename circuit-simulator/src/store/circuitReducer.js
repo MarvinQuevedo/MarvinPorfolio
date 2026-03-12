@@ -3,7 +3,7 @@ export const initialState = {
   wires: [],
   selectedElementId: null,
   isSimulating: false,
-  enableDamage: true,
+  enableDamage: false,
   simulationResults: {
     nodeVoltages: {}, // pinId -> voltage
     branchCurrents: {} // compId -> current
@@ -114,11 +114,21 @@ export function circuitReducer(state, action) {
         )
       };
 
+    case 'SET_SWITCH_STATE':
+      return {
+        ...state,
+        components: state.components.map(c => 
+          c.id === action.payload.id && (c.type === 'SWITCH' || c.type === 'PUSH_BUTTON')
+            ? { ...c, properties: { ...c.properties, closed: action.payload.closed } } 
+            : c
+        )
+      };
+
     case 'TOGGLE_SWITCH':
       return {
         ...state,
         components: state.components.map(c => 
-          c.id === action.payload && c.type === 'SWITCH'
+          c.id === action.payload && (c.type === 'SWITCH' || c.type === 'PUSH_BUTTON')
             ? { ...c, properties: { ...c.properties, closed: !c.properties.closed } } 
             : c
         )

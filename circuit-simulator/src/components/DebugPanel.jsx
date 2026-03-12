@@ -1,4 +1,5 @@
 import React from 'react';
+import { registry } from '../core/ComponentDefs';
 
 const COLORS = ['#f87171', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6'];
 const SCOPE_W = 500;
@@ -122,9 +123,13 @@ export default function DebugPanel({
                 const damaged = comp.properties.damaged;
                 const is3pin = comp.pins.length >= 3;
 
+                const model = registry.get(comp.type);
                 let stateEl;
                 if (damaged) {
                   stateEl = <span style={{ color: '#f87171' }}>DAMAGED</span>;
+                } else if (model && model.getDebugState) {
+                  const debugVal = model.getDebugState(comp, nodeVoltages, branchCurrents);
+                  stateEl = <span style={{ color: '#60a5fa' }}>{debugVal}</span>;
                 } else if (comp.type === 'CAPACITOR') {
                   const vCap = comp.properties.vCap ?? 0;
                   const pct = Math.min(100, Math.abs(vCap) / (comp.properties.maxVoltage || 50) * 100);
