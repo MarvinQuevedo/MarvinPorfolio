@@ -31,39 +31,71 @@ function App() {
   }, [state.selectedElementId]);
 
   useEffect(() => {
-    if (state.isSimulating) {
+    if (!state.isSimulating) {
+      dispatch({ type: 'SET_SIMULATION_RESULTS', payload: { nodeVoltages: {}, branchCurrents: {} } });
+      return;
+    }
+
+    let lastTime = performance.now();
+    let frameId;
+
+    const tick = () => {
       try {
-        const results = simulateCircuit(state.components, state.wires);
-        
+        let currentResults = null;
         let newlyDamagedIds = [];
-        if (state.enableDamage) {
-          state.components.forEach(comp => {
-            if (comp.properties.damaged) return;
-            const model = registry.get(comp.type);
-            if (model && model.checkDamage) {
-              const current = Math.abs(results.branchCurrents[comp.id] || 0);
-              const vA = results.nodeVoltages[comp.pins[0]?.id] || 0;
-              const vB = results.nodeVoltages[comp.pins[1]?.id] || 0;
-              const reason = model.checkDamage(comp, current, vA - vB);
-              if (reason) {
-                newlyDamagedIds.push({ id: comp.id, reason });
+        let cumulativeUpdates = {};
+
+        // Run multiple sub-steps per frame for real-time feel
+        for (let i = 0; i < 5; i++) {
+          const results = simulateCircuit(state.components, state.wires);
+          currentResults = results;
+          
+          // Merge transient updates
+          Object.assign(cumulativeUpdates, results.updatedComponentProperties);
+
+          if (state.enableDamage) {
+            state.components.forEach(comp => {
+              if (comp.properties.damaged || newlyDamagedIds.some(d => d.id === comp.id)) return;
+              const model = registry.get(comp.type);
+              if (model && model.checkDamage) {
+                const current = Math.abs(results.branchCurrents[comp.id] || 0);
+                const vA = results.nodeVoltages[comp.pins[0]?.id] || 0;
+                const vB = results.nodeVoltages[comp.pins[1]?.id] || 0;
+                const reason = model.checkDamage(comp, current, vA - vB);
+                if (reason) {
+                  newlyDamagedIds.push({ id: comp.id, reason });
+                }
               }
-            }
+            });
+          }
+          
+          if (newlyDamagedIds.length > 0) break;
+          
+          // Update the components in-memory for the next sub-step
+          state.components.forEach(c => {
+              if (results.updatedComponentProperties[c.id]) {
+                  Object.assign(c.properties, results.updatedComponentProperties[c.id]);
+              }
           });
         }
         
         if (newlyDamagedIds.length > 0) {
           dispatch({ type: 'APPLY_DAMAGE', payload: newlyDamagedIds });
-          // state update will trigger a re-run of this hook next render
-        } else {
-          dispatch({ type: 'SET_SIMULATION_RESULTS', payload: results });
+          return;
+        }
+
+        if (currentResults) {
+          dispatch({ type: 'SIMULATION_TICK', payload: { results: currentResults } });
         }
       } catch (err) {
         console.error("Simulation error", err);
       }
-    } else {
-      dispatch({ type: 'SET_SIMULATION_RESULTS', payload: { nodeVoltages: {}, branchCurrents: {} } });
-    }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
   }, [state.isSimulating, state.components, state.wires, state.enableDamage]);
 
   const handleSave = () => {

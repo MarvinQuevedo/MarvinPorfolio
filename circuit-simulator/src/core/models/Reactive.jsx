@@ -49,35 +49,61 @@ export class CapacitorModel extends BaseComponent {
   }
   get color() { return '#818cf8'; } // indigo
 
-  applyMNA(A, Z, componentState, finalNodeMap) {
+  applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages, dt) {
     if (componentState.properties.damaged) return;
-    // DC steady‑state ≈ open circuit
-    const G = 1e-9;
-    const n1 = finalNodeMap.get(componentState.pins[0].id) || 0;
-    const n2 = finalNodeMap.get(componentState.pins[1].id) || 0;
-    if (n1 > 0) A[n1 - 1][n1 - 1] += G;
-    if (n2 > 0) A[n2 - 1][n2 - 1] += G;
+    
+    const C = componentState.properties.capacitance ?? 100e-6;
+    const vCap = componentState.properties.vCap ?? 0;
+    
+    // Transient companion model (Backward Euler/Thevenin equivalent)
+    // I = C * dv/dt => I = C/dt * (v(t) - v(t-dt))
+    // I = G_eq * v(t) - G_eq * v(t-dt)
+    // G_eq = C / dt
+    // I_eq = G_eq * vCap
+    const G_eq = C / Math.max(dt, 1e-6);
+    const I_eq = G_eq * vCap;
+
+    const n1 = resolvedNodeMap.get(componentState.pins[0].id) || 0;
+    const n2 = resolvedNodeMap.get(componentState.pins[1].id) || 0;
+
+    // Stamp G_eq (like a resistor)
+    if (n1 > 0) A[n1 - 1][n1 - 1] += G_eq;
+    if (n2 > 0) A[n2 - 1][n2 - 1] += G_eq;
     if (n1 > 0 && n2 > 0) {
-      A[n1 - 1][n2 - 1] -= G;
-      A[n2 - 1][n1 - 1] -= G;
+      A[n1 - 1][n2 - 1] -= G_eq;
+      A[n2 - 1][n1 - 1] -= G_eq;
     }
+    
+    // Stamp I_eq (current source in parallel with G_eq)
+    // It flows from Pin 0 to Pin 1 if vCap is positive (vCap = V0 - V1)
+    if (n1 > 0) Z[n1 - 1] += I_eq;
+    if (n2 > 0) Z[n2 - 1] -= I_eq;
   }
 
-  extractCurrent(componentState, nodeVoltages) {
-    return 0; // open circuit in DC steady state
+  extractCurrent(componentState, nodeVoltages, extraVarIndices, dt) {
+    if (componentState.properties.damaged) return 0;
+    const C = componentState.properties.capacitance ?? 100e-6;
+    const p1 = componentState.pins[0].id;
+    const p2 = componentState.pins[1].id;
+    const V_curr = (nodeVoltages[p1] || 0) - (nodeVoltages[p2] || 0);
+    const vCap = componentState.properties.vCap ?? 0;
+    
+    // Transient current: I = C * (V_curr - vCap) / dt
+    return C * (V_curr - vCap) / Math.max(dt, 1e-6);
   }
 
   checkDamage(componentState, current, voltage) {
     if (componentState.properties.damaged) return false;
     const maxV = componentState.properties.maxVoltage ?? 50;
+    // For capacitors, overvoltage is usually the primary failure mode
     if (Math.abs(voltage) > maxV) {
-      return `Overvoltage: ${Math.abs(voltage).toFixed(1)}V exceeded the ${maxV}V capacitor rating. Dielectric breakdown.`;
+      return `Overvoltage: ${Math.abs(voltage).toFixed(1)}V exceeded the ${maxV}V rating. Dielectric breakdown.`;
     }
     return false;
   }
 
   renderShape(componentState, simulationCurrent) {
-    const isCharged = Math.abs(simulationCurrent) > 1e-6;
+    const isCharged = Math.abs(componentState.properties.vCap || 0) > 0.1;
     const c = this.color;
     return (
       <g>

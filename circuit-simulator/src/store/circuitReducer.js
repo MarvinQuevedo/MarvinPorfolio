@@ -89,6 +89,18 @@ export function circuitReducer(state, action) {
         )
       };
 
+    case 'UPDATE_PROPERTIES_BATCH_ALL': {
+        const updates = action.payload; // compId -> { props }
+        return {
+          ...state,
+          components: state.components.map(c =>
+            updates[c.id]
+              ? { ...c, properties: { ...c.properties, ...updates[c.id] } }
+              : c
+          )
+        };
+    }
+
     case 'SET_SELECTED':
       return { ...state, selectedElementId: action.payload };
 
@@ -160,6 +172,21 @@ export function circuitReducer(state, action) {
 
     case 'LOAD_CIRCUIT':
       return { ...initialState, ...action.payload };
+
+    case 'SIMULATION_TICK': {
+      const { results } = action.payload;
+      const updates = results.updatedComponentProperties || {};
+      
+      return {
+        ...state,
+        simulationResults: results,
+        components: state.components.map(c =>
+          updates[c.id]
+            ? { ...c, properties: { ...c.properties, ...updates[c.id] } }
+            : c
+        )
+      };
+    }
 
     case 'CLEAR_CIRCUIT':
       return { ...initialState };

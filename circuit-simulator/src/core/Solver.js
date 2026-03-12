@@ -49,7 +49,7 @@ export function solveLinearSystem(A, B) {
   return x;
 }
 
-export function simulateCircuit(components, wires) {
+export function simulateCircuit(components, wires, dt = 0.005) {
   const pinToNode = new Map();
   let nodeCount = 0;
 
@@ -100,7 +100,7 @@ export function simulateCircuit(components, wires) {
   }
 
   if (uniqueNodes.length <= 1) {
-    return { nodeVoltages: {}, branchCurrents: {} };
+    return { nodeVoltages: {}, branchCurrents: {}, updatedComponentProperties: {} };
   }
 
   const finalNodeMap = new Map();
@@ -132,7 +132,7 @@ export function simulateCircuit(components, wires) {
   });
 
   const mnaSize = numNodes + totalExtraVars;
-  if (mnaSize === 0) return { nodeVoltages: {}, branchCurrents: {} };
+  if (mnaSize === 0) return { nodeVoltages: {}, branchCurrents: {}, updatedComponentProperties: {} };
 
   const resolvedNodeMap = new Map();
   pinToNode.forEach((originalNode, pinId) => {
@@ -155,11 +155,11 @@ export function simulateCircuit(components, wires) {
     components.forEach(c => {
       const model = registry.get(c.type);
       if (model) {
-        model.applyMNA(A, Z, c, resolvedNodeMap, extraVarMap.get(c.id) || [], tempNodeVoltages);
+        model.applyMNA(A, Z, c, resolvedNodeMap, extraVarMap.get(c.id) || [], tempNodeVoltages, dt);
       }
     });
 
-    const G_wire = 1e3; // 1 mOhm (safe for numeric stability in JS)
+    const G_wire = 1e3; // 1 mOhm
     wires.forEach(w => {
       const n1 = resolvedNodeMap.get(w.startPinId) || 0;
       const n2 = resolvedNodeMap.get(w.endPinId) || 0;
@@ -195,13 +195,21 @@ export function simulateCircuit(components, wires) {
   });
 
   const branchCurrents = {};
-  const getV = (pinId) => nodeVoltages[pinId] || 0;
+  const updatedComponentProperties = {}; // compId -> properties object
 
   components.forEach(c => {
     const model = registry.get(c.type);
     if (model) {
       const extraVars = (extraVarMap.get(c.id) || []).map(idx => X[idx]);
-      branchCurrents[c.id] = model.extractCurrent(c, nodeVoltages, extraVars);
+      const current = model.extractCurrent(c, nodeVoltages, extraVars, dt);
+      branchCurrents[c.id] = current;
+      
+      // Update internal state for transient components
+      if (c.type === 'CAPACITOR') {
+          const vA = nodeVoltages[c.pins[0].id] || 0;
+          const vB = nodeVoltages[c.pins[1].id] || 0;
+          updatedComponentProperties[c.id] = { vCap: vA - vB };
+      }
     }
   });
 
@@ -212,5 +220,5 @@ export function simulateCircuit(components, wires) {
     branchCurrents[w.id] = (vStart - vEnd) * 1e3; 
   });
 
-  return { nodeVoltages, branchCurrents };
+  return { nodeVoltages, branchCurrents, updatedComponentProperties };
 }
