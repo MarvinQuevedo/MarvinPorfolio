@@ -7,6 +7,7 @@ import {
   AndGateModel, OrGateModel, NotGateModel, XorGateModel, NandGateModel, NorGateModel,
   SevenSegmentDisplayModel, DecoderBCD7SegModel, Counter4BitModel, ShiftRegister8BitModel, ClockSourceModel 
 } from './models/Digital.jsx';
+import { VoltageRegulatorModel } from './models/Power.jsx';
 
 // Register core models
 registry.register(new ResistorModel());
@@ -21,6 +22,7 @@ registry.register(new LedModel());
 registry.register(new CapacitorModel());
 registry.register(new NpnTransistorModel());
 registry.register(new PnpTransistorModel());
+registry.register(new VoltageRegulatorModel());
 
 // Register digital models
 registry.register(new AndGateModel());

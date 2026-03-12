@@ -16,9 +16,16 @@ function App() {
   const [showExamples, setShowExamples] = useState(false);
   const [showDebugger, setShowDebugger] = useState(false);
   const [watchedPins, setWatchedPins] = useState([]);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
   const debugHistoryRef = useRef([]);
   const simTimeRef = useRef(0);
   const simResultsRef = useRef({ nodeVoltages: {}, branchCurrents: {} });
+  const stateRef = useRef(state);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Expose API for console debugging
   useEffect(() => {
@@ -73,18 +80,39 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       const activeElement = document.activeElement;
+      const currentState = stateRef.current;
+
       // Do not handle keydown if user is typing in an input
       if (activeElement && activeElement.tagName === 'INPUT') return;
 
-      if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedElementId) {
-        dispatch({ type: 'REMOVE_ELEMENT', payload: state.selectedElementId });
-      } else if ((e.key === 'r' || e.key === 'R') && state.selectedElementId) {
-        dispatch({ type: 'ROTATE_COMPONENT', payload: state.selectedElementId });
+      const isZ = e.key.toLowerCase() === 'z';
+      const isY = e.key.toLowerCase() === 'y';
+      const isCtrl = e.ctrlKey || e.metaKey;
+
+      if (isCtrl && isZ) {
+        e.preventDefault();
+        if (e.shiftKey) dispatch({ type: 'REDO' });
+        else dispatch({ type: 'UNDO' });
+        return;
+      }
+
+      if (isCtrl && isY) {
+        e.preventDefault();
+        dispatch({ type: 'REDO' });
+        return;
+      }
+
+      if ((e.key === 'Backspace' || e.key === 'Delete') && currentState.selectedElementId) {
+        e.preventDefault();
+        dispatch({ type: 'REMOVE_ELEMENT', payload: currentState.selectedElementId });
+      } else if ((e.key === 'r' || e.key === 'R') && currentState.selectedElementId) {
+        e.preventDefault();
+        dispatch({ type: 'ROTATE_COMPONENT', payload: currentState.selectedElementId });
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.selectedElementId]);
+  }, []); // No deps needed with stateRef
 
   // Reset debug history when simulation starts/stops
   // Also auto-probe interesting pins if nothing is selected
@@ -95,7 +123,10 @@ function App() {
       
       const savedProbes = JSON.parse(localStorage.getItem('debug_watched_pins') || '[]');
       if (watchedPins.length === 0 && savedProbes.length > 0) {
-        setWatchedPins(savedProbes);
+        // Validation: Only load probes that exist in current project
+        const validIds = new Set(state.components.flatMap(c => c.pins.map(p => p.id)));
+        const filtered = savedProbes.filter(id => validIds.has(id));
+        if (filtered.length > 0) setWatchedPins(filtered);
       } else if (watchedPins.length === 0 && state.components.length > 0) {
         // Smart Auto-Probe: Target the Input and the Final Load
         const source = state.components.find(c => c.type === 'AC_VOLTAGE_SOURCE' || c.type === 'DC_VOLTAGE_SOURCE');
@@ -245,6 +276,8 @@ function App() {
       try {
         const parsed = JSON.parse(data);
         dispatch({ type: 'LOAD_CIRCUIT', payload: parsed });
+        setWatchedPins([]);
+        localStorage.removeItem('debug_watched_pins');
       } catch (e) {
         alert('Failed to load circuit.');
       }
@@ -279,9 +312,12 @@ function App() {
     <div className="app-container" onDrop={handleDrop} onDragOver={handleDragOver}>
       <div className="top-bar glass-panel">
         <h1 style={{ fontSize: '1.2rem', margin: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{color: 'var(--accent-color)'}}>⚡</span> Circuit Simulator
+          <button className="tb-btn mobile-only" onClick={() => setMobileSidebarOpen(true)} style={{ padding: '8px' }}>☰</button>
+          <span style={{color: 'var(--accent-color)'}}>⚡</span> <span className="logo-text">Circuit Simulator</span>
         </h1>
-        <div style={{ display: 'flex', gap: '10px' }}>
+
+        {/* Desktop Only Actions */}
+        <div className="desktop-actions" style={{ display: 'flex', gap: '10px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
             <input 
               type="checkbox" 
@@ -312,9 +348,25 @@ function App() {
             {state.isSimulating ? <span className="pulse-dot"></span> : null}
           </button>
         </div>
+
+        {/* Mobile Only Actions Toggle */}
+        <button className="tb-btn mobile-only" onClick={() => setShowActionSheet(true)} style={{ padding: '8px' }}>⚙️</button>
       </div>
       <div className="main-content">
-        <Sidebar onAddComponent={() => {}} />
+        <Sidebar 
+          isOpen={mobileSidebarOpen}
+          onClose={() => setMobileSidebarOpen(false)}
+          onAddComponent={(type) => {
+            if (state.isSimulating) {
+               alert("Cannot add components while simulation is running.");
+               return;
+            }
+            const newComponent = createComponent(type, 400, 300);
+            dispatch({ type: 'ADD_COMPONENT', payload: newComponent });
+            dispatch({ type: 'SET_SELECTED', payload: newComponent.id });
+            setMobileSidebarOpen(false); // Close drawer on mobile after adding
+          }} 
+        />
         <Canvas 
           components={state.components}
           wires={state.wires}
@@ -328,6 +380,7 @@ function App() {
               isSelected={state.selectedElementId === comp.id}
               onSelect={(id) => dispatch({ type: 'SET_SELECTED', payload: id })}
               onMove={(id, x, y) => dispatch({ type: 'MOVE_COMPONENT', payload: { id, x, y } })}
+              onMoveEnd={() => dispatch({ type: 'COMMIT_HISTORY' })}
               onRotate={(id) => dispatch({ type: 'ROTATE_COMPONENT', payload: id })}
               onInteract={(id) => dispatch({ type: 'TOGGLE_SWITCH', payload: id })}
               onPress={(id) => dispatch({ type: 'SET_SWITCH_STATE', payload: { id, closed: true } })}
@@ -379,10 +432,59 @@ function App() {
 
       {showExamples && (
         <ExamplesGallery
-          onLoad={(circuit) => dispatch({ type: 'LOAD_CIRCUIT', payload: circuit })}
+          onLoad={(circuit) => {
+            dispatch({ type: 'LOAD_CIRCUIT', payload: circuit });
+            setWatchedPins([]);
+            localStorage.removeItem('debug_watched_pins');
+            setShowExamples(false);
+          }}
           onClose={() => setShowExamples(false)}
         />
       )}
+
+      {/* Mobile Action Sheet */}
+      {showActionSheet && <div className="action-sheet-overlay" onClick={() => setShowActionSheet(false)} />}
+      <div className={`mobile-action-sheet ${showActionSheet ? 'open' : ''}`}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <span style={{ fontWeight: 'bold' }}>Simulation Actions</span>
+          <button onClick={() => setShowActionSheet(false)} style={{ background: 'transparent', border: 'none', color: '#64748b' }}>×</button>
+        </div>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <button className="tb-btn" onClick={() => { dispatch({ type: 'UNDO' }); setShowActionSheet(false); }}>↩️ Deshacer</button>
+          <button className="tb-btn" onClick={() => { dispatch({ type: 'REDO' }); setShowActionSheet(false); }}>↪️ Rehacer</button>
+        </div>
+
+        <button className="tb-btn sim-btn" onClick={() => { dispatch({ type: 'TOGGLE_SIMULATION' }); setShowActionSheet(false); }}>
+            {state.isSimulating ? 'Stop Simulation' : 'Start Simulation'}
+        </button>
+
+        <button className="tb-btn" onClick={() => { setShowDebugger(d => !d); setShowActionSheet(false); }}>
+            {showDebugger ? '⚙ Disable Probes' : '⚙ Enable Probes'}
+        </button>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <button className="tb-btn" onClick={() => { setShowExamples(true); setShowActionSheet(false); }}>🔬 Examples</button>
+          <button className="tb-btn" onClick={() => { dispatch({ type: 'TOGGLE_VIZ_MODE' }); setShowActionSheet(false); }}>
+            {state.vizMode === 'analog' ? '📈 Analog' : '🔢 Digital'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <button className="tb-btn" onClick={() => { handleSave(); setShowActionSheet(false); }}>💾 Save</button>
+          <button className="tb-btn" onClick={() => { handleLoad(); setShowActionSheet(false); }}>📁 Load</button>
+        </div>
+        
+        <label style={{ display: 'flex', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', alignItems: 'center', gap: '10px', fontSize: '0.9rem' }}>
+          <input type="checkbox" checked={state.enableDamage} onChange={() => dispatch({ type: 'TOGGLE_DAMAGE' })} />
+          Enable Damage Physics
+        </label>
+      </div>
+
+      {/* Mobile Floating Action Button */}
+      <button className="mobile-fab mobile-only" onClick={() => setMobileSidebarOpen(true)}>
+        +
+      </button>
     </div>
   );
 }

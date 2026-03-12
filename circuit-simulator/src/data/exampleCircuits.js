@@ -55,7 +55,7 @@ const mkBulb = (id, x, y, r = 60, rot = 0) => ({
   properties: { resistance: r, maxPower: 2.5 },
   pins: mk2(id),
 });
-const mkCap = (id, x, y, c = 100e-6, rot = 0, vCap = 0) => ({
+const mkCap = (id, x, y, c = 100, rot = 0, vCap = 0) => ({
   id, type: 'CAPACITOR', x, y, rotation: rot,
   properties: { capacitance: c, maxVoltage: 50, vCap },
   pins: mk2(id),
@@ -69,6 +69,15 @@ const mkAcSrc = (id, x, y, v = 12, f = 60) => ({
   id, type: 'AC_VOLTAGE_SOURCE', x, y, rotation: 0,
   properties: { amplitude: v, frequency: f, time: 0 },
   pins: mk2(id),
+});
+const mkReg = (id, x, y, v = 5) => ({
+  id, type: 'VOLTAGE_REGULATOR', x, y, rotation: 0,
+  properties: { targetVoltage: v, dropoutVoltage: 2, maxCurrent: 1.5 },
+  pins: [
+    { id: pId(id, 0), index: 0, offsetX: -40, offsetY: 0, label: 'IN' },
+    { id: pId(id, 1), index: 1, offsetX:  40, offsetY: 0, label: 'OUT' },
+    { id: pId(id, 2), index: 2, offsetX:   0, offsetY: 30, label: 'GND' },
+  ],
 });
 const mkNPN = (id, x, y, modelId = '2N3904', rot = 0) => {
   const m = { '2N3904': { beta:100, Vbe:0.65, Ron:10, maxIc:0.2 }, '2N2222': { beta:150, Vbe:0.60, Ron:5, maxIc:0.6 } };
@@ -164,7 +173,7 @@ const blinkerCircuit = () => ({
     mkRes('r2', 340, 180, 22000, 90), mkRes('r3', 460, 180, 22000, 90),
     mkNPN('q1', 260, 420), mkNPN('q2', 540, 420),
     mkGndComp('g2', 290, 480), mkGndComp('g3', 570, 480),
-    mkCap('c1', 400, 340, 100e-6, 0, 8), mkCap('c2', 400, 260, 100e-6, 0, -8),
+    mkCap('c1', 400, 340, 100, 0, 8), mkCap('c2', 400, 260, 100, 0, -8),
   ],
   wires: [
     W('w1', pId('v1','1'), pId('g1','0')),
@@ -369,60 +378,58 @@ const cascadedCounterExample = () => {
 };
 
 const rectifierCircuit = () => {
-  const AC = 'ac1';
-  const G1 = 'g_ref';
-  const D1 = 'd_tl';
-  const D2 = 'd_tr';
-  const D3 = 'd_bl';
-  const D4 = 'd_br';
-  const C = 'c_smooth';
-  const R = 'r_load';
+  const AC = 'ac1', GRef = 'g_ref', C = 'c_smooth', REG = 'reg1', R = 'r_load';
+  const D1 = 'd1', D2 = 'd2', D3 = 'd3', D4 = 'd4';
 
   return {
     components: [
-      mkAcSrc(AC, 80, 250, 12, 2),
-      mkGndComp(G1, 40, 250),
+      mkAcSrc(AC, 100, 300, 20, 2), // 20V peak AC for 12V regulation headroom
+      mkGndComp(GRef, 60, 300),
       
-      // Bridge Rectifier
-      // Top row (High side): Anodes connected to AC inputs, Cathodes connected to DC+
-      { id: D1, type: 'DIODE', x: 340, y: 180, rotation: 0, properties: { modelId: '1N4001', label: 'D1' }, pins: mk2(D1) },
-      { id: D2, type: 'DIODE', x: 440, y: 180, rotation: 0, properties: { modelId: '1N4001', label: 'D2' }, pins: mk2(D2) },
+      // Bridge Rectifier (Standard Orientation)
+      mkDiode(D1, 350, 220),         
+      mkDiode(D2, 450, 220, 180),    
+      mkDiode(D3, 350, 380, 180),    
+      mkDiode(D4, 450, 380),         
       
-      // Bottom row (Low side): Cathodes connected to AC inputs, Anodes connected to DC-
-      // Rotating 180 flips pins: p0(Anode) is now at Right, p1(Cathode) is now at Left
-      { id: D3, type: 'DIODE', x: 340, y: 320, rotation: 180, properties: { modelId: '1N4001', label: 'D3' }, pins: mk2(D3) },
-      { id: D4, type: 'DIODE', x: 440, y: 320, rotation: 180, properties: { modelId: '1N4001', label: 'D4' }, pins: mk2(D4) },
+      // Filtering & Regulation
+      mkCap(C, 580, 300, 100, 90), 
+      mkReg(REG, 740, 260, 12),    // 7812 Typical
+      mkRes(R, 880, 300, 470, 90), 
       
-      // Smoothing & Load
-      mkCap(C, 580, 250, 470e-6, 90),
-      mkRes(R, 660, 250, 1000, 90),
-      mkGndComp('g_dc', 580, 320),
-      mkGndComp('g_load', 660, 320),
+      mkGndComp('g_dc', 580, 370),
+      mkGndComp('g_reg', 740, 370),
+      mkGndComp('g_load', 880, 370),
     ],
     wires: [
-      W('w_ac_src_g', pId(AC, '0'), pId(G1, '0')),
+      W('w_ac_src_g', pId(AC, '0'), pId(GRef, '0')),
       
-      // AC Phase 1 Bus (Vertical at x=310)
-      W('w_in_a', pId(AC, '1'), pId(D1, '0'), [{x: 180, y: 250}, {x: 180, y: 180}, {x: 310, y: 180}]),
-      W('w_in_a_link', pId(D1, '0'), pId(D3, '1'), [{x: 310, y: 180}, {x: 310, y: 320}]),
+      // AC Input 1: From AC source to Junction D1(A) - D3(C)
+      W('w_in_a1', pId(AC, '1'), pId(D1, '0'), [{x: 220, y: 300}, {x: 220, y: 220}, {x: 320, y: 220}]),
+      W('w_in_a2', pId(D1, '0'), pId(D3, '1'), [{x: 320, y: 220}, {x: 320, y: 380}]),
       
-      // AC Phase 2 Bus (Vertical at x=410) - Connected to Neutral/Gnd for simulation
-      W('w_in_b', pId(G1, '0'), pId(D2, '0'), [{x: 40, y: 100}, {x: 410, y: 100}, {x: 410, y: 180}]),
-      W('w_in_b_link', pId(D2, '0'), pId(D4, '1'), [{x: 410, y: 180}, {x: 410, y: 320}]),
+      // AC Input 2: From Gnd to Junction D2(A) - D4(C)
+      W('w_in_b1', pId(GRef, '0'), pId(D2, '0'), [{x: 60, y: 150}, {x: 480, y: 150}, {x: 480, y: 220}]),
+      W('w_in_b2', pId(D2, '0'), pId(D4, '1'), [{x: 480, y: 220}, {x: 480, y: 380}]),
       
-      // DC+ Bus (Connecting Cathodes of D1 and D2)
-      W('w_dc_pos_line', pId(D1, '1'), pId(D2, '1'), [{x: 370, y: 140}, {x: 470, y: 140}, {x: 470, y: 180}]),
-      // DC+ to Load
-      W('w_dc_to_cap', pId(D2, '1'), pId(C, '0'), [{x: 470, y: 180}, {x: 580, y: 180}, {x: 580, y: 220}]),
-      W('w_cap_to_res', pId(C, '0'), pId(R, '0'), [{x: 580, y: 220}, {x: 660, y: 220}]),
+      // DC+ Rail: Junction D1(C) - D2(C) -> Cap(+) -> Reg(IN)
+      W('w_dc_pos1', pId(D1, '1'), pId(D2, '1'), [{x: 380, y: 180}, {x: 420, y: 180}, {x: 420, y: 220}]),
+      W('w_dc_pos2', pId(D2, '1'), pId(C, '0'), [{x: 420, y: 220}, {x: 580, y: 220}, {x: 580, y: 270}]),
+      W('w_reg_in', pId(C, '0'), pId(REG, '0'), [{x: 580, y: 270}, {x: 700, y: 260}]),
       
-      // DC- Bus (Connecting Anodes of D3 and D4)
-      W('w_dc_neg_line', pId(D3, '0'), pId(D4, '0'), [{x: 370, y: 360}, {x: 470, y: 360}, {x: 470, y: 320}]),
-      // DC- Ground reference
-      W('w_dc_neg_g', pId(D4, '0'), pId('g_dc', '0'), [{x: 470, y: 320}, {x: 580, y: 320}]),
+      // DC- Rail (Gnd): Junction D3(A) - D4(A) -> Gnd
+      W('w_dc_neg1', pId(D3, '0'), pId(D4, '0'), [{x: 380, y: 420}, {x: 420, y: 420}, {x: 420, y: 380}]),
+      W('w_dc_neg2', pId(D4, '0'), pId('g_dc', '0'), [{x: 420, y: 380}, {x: 580, y: 380}, {x: 580, y: 370}]),
       
-      W('w_cap_gnd', pId(C, '1'), pId('g_dc', '0')),
-      W('w_res_gnd', pId(R, '1'), pId('g_load', '0')),
+      // Capacitor Gnd
+      W('w_cap_g', pId(C, '1'), pId('g_dc', '0')),
+      
+      // Regulator Output -> Load
+      W('w_reg_out', pId(REG, '1'), pId(R, '0'), [{x: 780, y: 260}, {x: 880, y: 260}, {x: 880, y: 270}]),
+      
+      // Regulator and Load Grounds
+      W('w_reg_g', pId(REG, '2'), pId('g_reg', '0')),
+      W('w_res_g', pId(R, '1'), pId('g_load', '0')),
     ]
   };
 };

@@ -10,6 +10,7 @@ export default function ComponentNode({
   onInteract,
   onPress,
   onRelease,
+  onMoveEnd,
   wiringHandlers,
   simulationCurrent,
   isSimulating,
@@ -63,6 +64,7 @@ export default function ComponentNode({
     }
 
     if (!isSimulating) {
+      if (isDragging && onMoveEnd) onMoveEnd();
       setIsDragging(false);
       try { e.target.releasePointerCapture(e.pointerId); } catch(e) {}
     }

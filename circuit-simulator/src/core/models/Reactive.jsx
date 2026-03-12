@@ -40,10 +40,10 @@ export class CapacitorModel extends BaseComponent {
   get label() { return 'Capacitor'; }
   get category() { return 'Passive'; }
   get numPins() { return 2; }
-  get defaultProperties() { return { capacitance: 100e-6, maxVoltage: 50 }; }
+  get defaultProperties() { return { capacitance: 100, maxVoltage: 50 }; }
   get propertyMeta() {
     return {
-      capacitance: { label: 'Capacitance (F)', type: 'number', step: '1e-6' },
+      capacitance: { label: 'Capacitance (μF)', type: 'number', step: 1 },
       maxVoltage: { label: 'Max Voltage (V)', type: 'number', min: 0 }
     };
   }
@@ -52,7 +52,9 @@ export class CapacitorModel extends BaseComponent {
   applyMNA(A, Z, componentState, resolvedNodeMap, extraVarIndices, lastNodeVoltages, dt) {
     if (componentState.properties.damaged) return;
     
-    const C = componentState.properties.capacitance ?? 100e-6;
+    // Convert μF to F for math
+    const val_uf = componentState.properties.capacitance ?? 100;
+    const C = val_uf * 1e-6;
     const vCap = componentState.properties.vCap ?? 0;
     
     // Transient companion model (Backward Euler/Thevenin equivalent)
@@ -82,7 +84,8 @@ export class CapacitorModel extends BaseComponent {
 
   extractCurrent(componentState, nodeVoltages, extraVarIndices, dt) {
     if (componentState.properties.damaged) return 0;
-    const C = componentState.properties.capacitance ?? 100e-6;
+    const val_uf = componentState.properties.capacitance ?? 100;
+    const C = val_uf * 1e-6;
     const p1 = componentState.pins[0].id;
     const p2 = componentState.pins[1].id;
     const V_curr = (nodeVoltages[p1] || 0) - (nodeVoltages[p2] || 0);
