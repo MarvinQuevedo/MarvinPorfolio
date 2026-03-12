@@ -188,8 +188,10 @@ export class NpnTransistorModel extends BaseComponent {
     const nE = resolvedNodeMap.get(pE) || 0;
 
     const vB = lastNodeVoltages ? (lastNodeVoltages[pB] || 0) : 0;
+    const vC = lastNodeVoltages ? (lastNodeVoltages[pC] || 0) : 0;
     const vE = lastNodeVoltages ? (lastNodeVoltages[pE] || 0) : 0;
     const Vbe = vB - vE;
+    const Vce = vC - vE;
 
     // ── Stamp base-emitter junction diode ──
     let G_be = 1e-9;
@@ -209,24 +211,36 @@ export class NpnTransistorModel extends BaseComponent {
     if (nB > 0) Z[nB - 1] += Ieq;
     if (nE > 0) Z[nE - 1] -= Ieq;
 
-    // ── Stamp collector current source β*IB ──
-    // IB = (Vbe - Vbe_on) / Ron  when active
-    // IC = β * IB, flows from C to E
+    // ── Stamp collector ──
+    // Use VCCS (voltage-controlled current source) in active region,
+    // or saturation model (small C-E resistance) when Vce is low.
+    // This prevents numerical explosion from large β*Ib current sources.
     if (Vbe > Vbe_on) {
-      const Ib = (Vbe - Vbe_on) / Ron;
-      const Ic = beta * Ib;
+      const Vce_sat = 0.2;
 
-      // current source from C to E (conventional: out of C, into E)
-      if (nC > 0) Z[nC - 1] -= Ic;
-      if (nE > 0) Z[nE - 1] += Ic;
-
-      // Collector conductance (small shunt to ground for numerical stability)
-      const G_ce = 1e-6;
-      if (nC > 0) A[nC - 1][nC - 1] += G_ce;
-      if (nE > 0) A[nE - 1][nE - 1] += G_ce;
-      if (nC > 0 && nE > 0) {
-        A[nC - 1][nE - 1] -= G_ce;
-        A[nE - 1][nC - 1] -= G_ce;
+      if (Vce >= Vce_sat) {
+        // ── Active region: VCCS stamp ──
+        // Ic = Gm*(Vb - Ve - Vbe_on), extracted from C, injected into E
+        const Gm = beta / Ron;
+        if (nC > 0 && nB > 0) A[nC - 1][nB - 1] += Gm;
+        if (nC > 0 && nE > 0) A[nC - 1][nE - 1] -= Gm;
+        if (nE > 0 && nB > 0) A[nE - 1][nB - 1] -= Gm;
+        if (nE > 0)            A[nE - 1][nE - 1] += Gm;
+        if (nC > 0) Z[nC - 1] += Gm * Vbe_on;
+        if (nE > 0) Z[nE - 1] -= Gm * Vbe_on;
+      } else {
+        // ── Saturation region: stamp low C-E resistance ──
+        // Model Vce ≈ Vce_sat via Norton equivalent: G_sat in parallel with I_sat
+        const G_sat = 1.0 / 0.01; // 100 S → effectively clamps Vce
+        const I_sat = G_sat * Vce_sat;
+        if (nC > 0) A[nC - 1][nC - 1] += G_sat;
+        if (nE > 0) A[nE - 1][nE - 1] += G_sat;
+        if (nC > 0 && nE > 0) {
+          A[nC - 1][nE - 1] -= G_sat;
+          A[nE - 1][nC - 1] -= G_sat;
+        }
+        if (nC > 0) Z[nC - 1] += I_sat;
+        if (nE > 0) Z[nE - 1] -= I_sat;
       }
     }
   }
@@ -342,8 +356,10 @@ export class PnpTransistorModel extends NpnTransistorModel {
     const nE = resolvedNodeMap.get(pE) || 0;
 
     const vB = lastNodeVoltages ? (lastNodeVoltages[pB] || 0) : 0;
+    const vC = lastNodeVoltages ? (lastNodeVoltages[pC] || 0) : 0;
     const vE = lastNodeVoltages ? (lastNodeVoltages[pE] || 0) : 0;
     const Veb = vE - vB; // PNP uses V_EB
+    const Vec = vE - vC; // PNP: Vec = Ve - Vc
 
     // ── Stamp emitter-base junction diode (reversed polarity) ──
     let G_eb = 1e-9;
@@ -364,20 +380,31 @@ export class PnpTransistorModel extends NpnTransistorModel {
     if (nE > 0) Z[nE - 1] += Ieq;
     if (nB > 0) Z[nB - 1] -= Ieq;
 
-    // ── PNP collector current source (flows from E to C) ──
+    // ── PNP collector: VCCS active / saturation clamp ──
     if (Veb > Vbe_on) {
-      const Ib = (Veb - Vbe_on) / Ron;
-      const Ic = beta * Ib;
+      const Vce_sat = 0.2;
 
-      if (nE > 0) Z[nE - 1] -= Ic;
-      if (nC > 0) Z[nC - 1] += Ic;
-
-      const G_ec = 1e-6;
-      if (nE > 0) A[nE - 1][nE - 1] += G_ec;
-      if (nC > 0) A[nC - 1][nC - 1] += G_ec;
-      if (nE > 0 && nC > 0) {
-        A[nE - 1][nC - 1] -= G_ec;
-        A[nC - 1][nE - 1] -= G_ec;
+      if (Vec >= Vce_sat) {
+        // Active: VCCS — Ic = Gm*(Ve - Vb - Vbe_on), extracted from E, injected into C
+        const Gm = beta / Ron;
+        if (nE > 0)            A[nE - 1][nE - 1] += Gm;
+        if (nE > 0 && nB > 0) A[nE - 1][nB - 1] -= Gm;
+        if (nC > 0 && nE > 0) A[nC - 1][nE - 1] -= Gm;
+        if (nC > 0 && nB > 0) A[nC - 1][nB - 1] += Gm;
+        if (nE > 0) Z[nE - 1] += Gm * Vbe_on;
+        if (nC > 0) Z[nC - 1] -= Gm * Vbe_on;
+      } else {
+        // Saturation: clamp Vec ≈ Vce_sat
+        const G_sat = 1.0 / 0.01;
+        const I_sat = G_sat * Vce_sat;
+        if (nE > 0) A[nE - 1][nE - 1] += G_sat;
+        if (nC > 0) A[nC - 1][nC - 1] += G_sat;
+        if (nE > 0 && nC > 0) {
+          A[nE - 1][nC - 1] -= G_sat;
+          A[nC - 1][nE - 1] -= G_sat;
+        }
+        if (nE > 0) Z[nE - 1] += I_sat;
+        if (nC > 0) Z[nC - 1] -= I_sat;
       }
     }
   }

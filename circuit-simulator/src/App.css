@@ -53,3 +53,145 @@
   border-radius: 12px;
   z-index: 20;
 }
+
+/* ── Debug Panel ── */
+.debug-panel {
+  position: absolute;
+  bottom: 0;
+  left: 250px; /* sidebar width */
+  right: 0;
+  z-index: 20;
+  background: rgba(6, 12, 26, 0.97);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  max-height: 270px;
+  font-size: 0.72rem;
+}
+
+.debug-header {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  color: #334155;
+}
+
+.debug-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Component table */
+.debug-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.debug-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  color: #cbd5e1;
+  table-layout: fixed;
+}
+
+.debug-table thead tr {
+  position: sticky;
+  top: 0;
+  background: rgba(6, 12, 26, 0.99);
+}
+
+.debug-table th {
+  text-align: left;
+  padding: 4px 8px;
+  color: #1e3a5f;
+  font-weight: 500;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-table th:nth-child(1) { width: 85px; }  /* Type */
+.debug-table th:nth-child(2) { width: 75px; }  /* ID (Short) */
+.debug-table th:nth-child(3) { width: 85px; }  /* Pin A */
+.debug-table th:nth-child(4) { width: 85px; }  /* Pin B */
+.debug-table th:nth-child(5) { width: 85px; }  /* Pin C */
+.debug-table th:nth-child(6) { width: 70px; }  /* ΔV */
+.debug-table th:nth-child(7) { width: 90px; }  /* Current */
+.debug-table th:nth-child(8) { width: auto; }  /* State */
+
+.debug-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.025);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Oscilloscope */
+.debug-scope {
+  width: 380px;
+  flex-shrink: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.debug-scope-svg {
+  display: block;
+  background: #040a14;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.debug-scope-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  overflow-y: auto;
+}
+
+.debug-scope-channel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.debug-scope-pin {
+  font-size: 0.63rem;
+  color: #334155;
+  font-family: monospace;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-scope-remove {
+  background: none;
+  border: none;
+  color: #1e3a5f;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.1s;
+}
+
+.debug-scope-remove:hover {
+  color: #f87171;
+}

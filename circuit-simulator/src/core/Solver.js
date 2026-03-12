@@ -181,7 +181,7 @@ export function simulateCircuit(components, wires, dt = 0.005) {
     }
     
     X = newX;
-    if (hasNaN || diff < 1e-4) break;
+    if (hasNaN || diff < 1e-7) break;
   }
 
   const nodeVoltages = {};

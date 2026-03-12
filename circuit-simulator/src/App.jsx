@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useState } from 'react';
+import React, { useReducer, useEffect, useState, useRef } from 'react';
 import './App.css';
 import { circuitReducer, initialState } from './store/circuitReducer';
 import { createComponent, registry } from './core/ComponentDefs';
@@ -9,10 +9,15 @@ import ComponentNode from './components/ComponentNode';
 import WireNode from './components/WireNode';
 import PropertiesPanel from './components/PropertiesPanel';
 import ExamplesGallery from './components/ExamplesGallery';
+import DebugPanel from './components/DebugPanel';
 
 function App() {
   const [state, dispatch] = useReducer(circuitReducer, initialState);
   const [showExamples, setShowExamples] = useState(false);
+  const [showDebugger, setShowDebugger] = useState(false);
+  const [watchedPins, setWatchedPins] = useState([]);
+  const debugHistoryRef = useRef([]);
+  const simTimeRef = useRef(0);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -30,14 +35,33 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.selectedElementId]);
 
+  // Reset debug history when simulation starts/stops
+  useEffect(() => {
+    if (state.isSimulating) {
+      simTimeRef.current = 0;
+      debugHistoryRef.current = [];
+    }
+  }, [state.isSimulating]);
+
+  const componentsRef = useRef(state.components);
+  const wiresRef = useRef(state.wires);
+  const enableDamageRef = useRef(state.enableDamage);
+
+  useEffect(() => {
+    componentsRef.current = state.components;
+    wiresRef.current = state.wires;
+    enableDamageRef.current = state.enableDamage;
+  }, [state.components, state.wires, state.enableDamage]);
+
   useEffect(() => {
     if (!state.isSimulating) {
       dispatch({ type: 'SET_SIMULATION_RESULTS', payload: { nodeVoltages: {}, branchCurrents: {} } });
       return;
     }
 
-    let lastTime = performance.now();
     let frameId;
+    const dt = 0.002; // 2ms steps for better transient stability
+    const subSteps = 10; // 10 steps per frame = 20ms sim per frame
 
     const tick = () => {
       try {
@@ -45,16 +69,18 @@ function App() {
         let newlyDamagedIds = [];
         let cumulativeUpdates = {};
 
-        // Run multiple sub-steps per frame for real-time feel
-        for (let i = 0; i < 5; i++) {
-          const results = simulateCircuit(state.components, state.wires);
+        // Use current refs to get the latest state
+        const components = componentsRef.current;
+        const wires = wiresRef.current;
+
+        for (let i = 0; i < subSteps; i++) {
+          const results = simulateCircuit(components, wires, dt);
           currentResults = results;
           
-          // Merge transient updates
           Object.assign(cumulativeUpdates, results.updatedComponentProperties);
 
-          if (state.enableDamage) {
-            state.components.forEach(comp => {
+          if (enableDamageRef.current) {
+            components.forEach(comp => {
               if (comp.properties.damaged || newlyDamagedIds.some(d => d.id === comp.id)) return;
               const model = registry.get(comp.type);
               if (model && model.checkDamage) {
@@ -62,17 +88,15 @@ function App() {
                 const vA = results.nodeVoltages[comp.pins[0]?.id] || 0;
                 const vB = results.nodeVoltages[comp.pins[1]?.id] || 0;
                 const reason = model.checkDamage(comp, current, vA - vB);
-                if (reason) {
-                  newlyDamagedIds.push({ id: comp.id, reason });
-                }
+                if (reason) newlyDamagedIds.push({ id: comp.id, reason });
               }
             });
           }
           
           if (newlyDamagedIds.length > 0) break;
           
-          // Update the components in-memory for the next sub-step
-          state.components.forEach(c => {
+          // Apply transient updates (vCap) in-place for the next sub-step
+          components.forEach(c => {
               if (results.updatedComponentProperties[c.id]) {
                   Object.assign(c.properties, results.updatedComponentProperties[c.id]);
               }
@@ -85,6 +109,12 @@ function App() {
         }
 
         if (currentResults) {
+          simTimeRef.current += subSteps * dt;
+          const history = debugHistoryRef.current;
+          history.push({ time: simTimeRef.current, nodeVoltages: { ...currentResults.nodeVoltages } });
+          if (history.length > 300) history.splice(0, history.length - 300);
+
+          // This dispatch will trigger a re-render and also update componentsRef (via the other useEffect)
           dispatch({ type: 'SIMULATION_TICK', payload: { results: currentResults } });
         }
       } catch (err) {
@@ -96,7 +126,14 @@ function App() {
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [state.isSimulating, state.components, state.wires, state.enableDamage]);
+  }, [state.isSimulating]);
+
+  const handleTogglePin = (pinId) => {
+    if (!pinId) return;
+    setWatchedPins(prev =>
+      prev.includes(pinId) ? prev.filter(p => p !== pinId) : [...prev.slice(-5), pinId]
+    );
+  };
 
   const handleSave = () => {
     const data = JSON.stringify({ components: state.components, wires: state.wires });
@@ -156,6 +193,13 @@ function App() {
             Damage Physics
           </label>
           <button className="tb-btn" onClick={() => setShowExamples(true)}>🔬 Examples</button>
+          <button
+            className="tb-btn"
+            style={showDebugger ? { borderColor: 'rgba(96,165,250,0.5)', color: '#60a5fa' } : {}}
+            onClick={() => setShowDebugger(d => !d)}
+          >
+            {showDebugger ? '⚙ Debugger ON' : '⚙ Debugger'}
+          </button>
           <button className="tb-btn" onClick={handleSave}>Save</button>
           <button className="tb-btn" onClick={handleLoad}>Load</button>
           <button className="tb-btn sim-btn" onClick={() => dispatch({ type: 'TOGGLE_SIMULATION' })}>
@@ -202,11 +246,23 @@ function App() {
           )}
         />
         {state.selectedElementId && (
-          <PropertiesPanel 
+          <PropertiesPanel
             elementId={state.selectedElementId}
             components={state.components}
             wires={state.wires}
             dispatch={dispatch}
+          />
+        )}
+
+        {showDebugger && (
+          <DebugPanel
+            components={state.components}
+            nodeVoltages={state.simulationResults.nodeVoltages}
+            branchCurrents={state.simulationResults.branchCurrents}
+            historyRef={debugHistoryRef}
+            watchedPins={watchedPins}
+            onTogglePin={handleTogglePin}
+            simTime={simTimeRef.current}
           />
         )}
       </div>

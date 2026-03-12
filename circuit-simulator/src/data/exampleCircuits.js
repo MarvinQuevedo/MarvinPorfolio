@@ -67,9 +67,9 @@ const mkBulb = (id, x, y, r = 60, rot = 0) => ({
   properties: { resistance: r, maxPower: 2.5 },
   pins: mk2(id),
 });
-const mkCap = (id, x, y, c = 100e-6, rot = 0) => ({
+const mkCap = (id, x, y, c = 100e-6, rot = 0, vCap = 0) => ({
   id, type: 'CAPACITOR', x, y, rotation: rot,
-  properties: { capacitance: c, maxVoltage: 50 },
+  properties: { capacitance: c, maxVoltage: 50, vCap },
   pins: mk2(id),
 });
 const mkNPN = (id, x, y, modelId = '2N3904', rot = 0) => {
@@ -134,8 +134,11 @@ const blinkerCircuit = () => {
       mkGndComp(G2, 570, 480),
 
       // Capacitors (Cross-coupling)
-      mkCap(C1, 400, 340, 100e-6), // 100uF
-      mkCap(C2, 400, 260, 101e-6), // 101uF (asymmetry for oscillation)
+      // Initial vCap sets the starting state: Q1 ON, Q2 OFF
+      // C1 (Q1_C → Q2_B): vCap=+8 drives Q2_B negative → Q2 OFF
+      // C2 (Q2_C → Q1_B): vCap=-8 with G_eq pulls Q1_B to ~1V → Q1 ON
+      mkCap(C1, 400, 340, 100e-6, 0,  8),
+      mkCap(C2, 400, 260, 100e-6, 0, -8),
     ],
     wires: [
       W('bw1', pId(V,'1'), pId(G,'0')), // Source - to GND
