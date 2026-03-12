@@ -1,6 +1,6 @@
 import { registry } from './ComponentRegistry';
 import { ResistorModel, SwitchModel, PushbuttonModel, BulbModel } from './models/ResistorBased.jsx';
-import { DcVoltageSourceModel, GroundModel } from './models/Sources.jsx';
+import { DcVoltageSourceModel, AcVoltageSourceModel, GroundModel } from './models/Sources.jsx';
 import { DiodeModel, LedModel } from './models/Semiconductors.jsx';
 import { CapacitorModel, NpnTransistorModel, PnpTransistorModel } from './models/Reactive.jsx';
 import { 
@@ -14,6 +14,7 @@ registry.register(new SwitchModel());
 registry.register(new PushbuttonModel());
 registry.register(new BulbModel());
 registry.register(new DcVoltageSourceModel());
+registry.register(new AcVoltageSourceModel());
 registry.register(new GroundModel());
 registry.register(new DiodeModel());
 registry.register(new LedModel());

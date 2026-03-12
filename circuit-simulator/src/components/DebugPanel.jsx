@@ -1,10 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { registry } from '../core/ComponentDefs';
 
 const COLORS = ['#f87171', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6'];
 const SCOPE_W = 500;
-const SCOPE_H = 110;
-const MAX_HISTORY = 300;
+const MAX_HISTORY = 800;
 
 function fmtV(v) {
   if (v === null || v === undefined || isNaN(v)) return '—';
@@ -23,6 +22,25 @@ function hexToRgb(hex) {
   const m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
   if (!m) return '255,255,255';
   return `${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)}`;
+}
+
+/**
+ * Intelligent pin selector: Picks the pin with most "potential" (non-ground)
+ */
+function selectSmartPin(comp, nodeVoltages) {
+  if (!comp.pins || comp.pins.length === 0) return null;
+  let best = comp.pins[0].id;
+  let maxV = Math.abs(nodeVoltages?.[best] || 0);
+
+  for (let i = 1; i < comp.pins.length; i++) {
+    const pid = comp.pins[i].id;
+    const v = Math.abs(nodeVoltages?.[pid] || 0);
+    if (v > maxV) {
+      best = pid;
+      maxV = v;
+    }
+  }
+  return best;
 }
 
 function VBtn({ pinId, label, nodeVoltages, watchedPins, onTogglePin }) {
@@ -64,169 +82,251 @@ export default function DebugPanel({
   onTogglePin,
   simTime,
 }) {
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('debug_view_mode') || 'dashboard'); 
+  const [panelHeight, setPanelHeight] = useState(() => parseFloat(localStorage.getItem('debug_panel_h')) || window.innerHeight * 0.3);
+  const [scopeWidth, setScopeWidth] = useState(() => parseFloat(localStorage.getItem('debug_scope_w')) || window.innerWidth * 0.4);
+  const [timeScale, setTimeScale] = useState(1); 
+  const [vScale, setVScale] = useState(1);
+  const resizeModeRef = useRef(null); // 'height' | 'width'
+  const scopeRef = useRef(null);
+
+  // Persistence Effects
+  useEffect(() => { localStorage.setItem('debug_view_mode', viewMode); }, [viewMode]);
+  useEffect(() => { localStorage.setItem('debug_panel_h', panelHeight); }, [panelHeight]);
+  useEffect(() => { localStorage.setItem('debug_scope_w', scopeWidth); }, [scopeWidth]);
+
+  // Sync default width on first mount if not set
+  useEffect(() => {
+    if (!localStorage.getItem('debug_scope_w')) {
+      setScopeWidth(window.innerWidth * 0.5 - 250);
+    }
+  }, []);
+
+  // Smooth values for Dashboard 
+  const smoothValuesRef = useRef(new Map());
+
+  useEffect(() => {
+    components.forEach(c => {
+      const v0 = nodeVoltages?.[c.pins[0]?.id] ?? 0;
+      const v1 = nodeVoltages?.[c.pins[1]?.id] ?? 0;
+      const curV = v0 - v1;
+      const curI = branchCurrents?.[c.id] ?? 0;
+      const prev = smoothValuesRef.current.get(c.id) || { v: curV, i: curI };
+      smoothValuesRef.current.set(c.id, {
+        v: prev.v * 0.9 + curV * 0.1,
+        i: prev.i * 0.9 + curI * 0.1
+      });
+    });
+  }, [nodeVoltages, branchCurrents, components]);
+
+  const handleResizeStart = useCallback((mode, e) => {
+    resizeModeRef.current = mode;
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    e.preventDefault();
+  }, []);
+
+  const handleResizeMove = useCallback((e) => {
+    if (resizeModeRef.current === 'height') {
+      const newHeight = window.innerHeight - e.clientY;
+      if (newHeight > 100 && newHeight < window.innerHeight * 0.7) setPanelHeight(newHeight);
+    } else if (resizeModeRef.current === 'width') {
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth > 300 && newWidth < window.innerWidth * 0.6) setScopeWidth(newWidth);
+    }
+  }, []);
+
+  const handleResizeEnd = useCallback(() => {
+    resizeModeRef.current = null;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+  }, [handleResizeMove]);
+
   const history = historyRef?.current ?? [];
 
-  // Compute oscilloscope waveforms
+  // Oscilloscope calculation - Scale based on real volts
+  const getScaleFactor = () => vScale * 5; 
+
+  // Calculate dynamic SCOPE_H based on panel height and header/controls
+  // panelHeight - header(35) - body_padding(2) - controls(35) - legend(30)
+  const dynamicScopeH = Math.max(80, panelHeight - 110);
+
   const scopeChannels = watchedPins.map((pinId, ci) => {
     if (history.length < 2) return null;
     const color = COLORS[ci % COLORS.length];
-    const vals = history.map(h => h.nodeVoltages?.[pinId] ?? 0);
-    const yMin = Math.min(...vals, 0) - 0.5;
-    const yMax = Math.max(...vals, 9) + 0.5;
-    const range = yMax - yMin || 1;
-    const pts = vals.map((v, i) => {
-      const x = (i / Math.max(vals.length - 1, 1)) * SCOPE_W;
-      const y = SCOPE_H - ((v - yMin) / range) * SCOPE_H;
+
+    const sliceCount = Math.max(10, Math.floor(history.length / timeScale));
+    const slicedHistory = history.slice(-sliceCount);
+    
+    const factor = getScaleFactor();
+    const pts = slicedHistory.map((h, i) => {
+      const x = (i / Math.max(slicedHistory.length - 1, 1)) * SCOPE_W;
+      const v = h.nodeVoltages?.[pinId] ?? 0;
+      const y = (dynamicScopeH / 2) - (v * factor);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
-    return { pinId, color, pts, yMin, yMax, current: nodeVoltages?.[pinId] };
+
+    return { pinId, color, pts, current: nodeVoltages?.[pinId] };
   }).filter(Boolean);
 
   return (
-    <div className="debug-panel">
-      {/* ── Header ── */}
+    <div className="debug-panel" style={{ height: panelHeight }}>
+      <div className="debug-resize-handle" onMouseDown={(e) => handleResizeStart('height', e)} />
+      
       <div className="debug-header">
-        <span style={{ fontWeight: 600, color: '#60a5fa', fontSize: '0.8rem' }}>
-          Circuit Debugger
+        <span style={{ fontWeight: 700, color: '#60a5fa', fontSize: '0.85rem', letterSpacing: '0.05em' }}>
+          DEBUGGER
         </span>
-        <span style={{ fontSize: '0.7rem', color: '#334155', marginLeft: '10px' }}>
-          t = {simTime.toFixed(3)}s
-        </span>
-        <span style={{ fontSize: '0.7rem', color: '#1e3a5f', marginLeft: '8px' }}>
-          {history.length}/{MAX_HISTORY} samples
-        </span>
-        <span style={{ fontSize: '0.68rem', color: '#1e3a5f', marginLeft: 'auto' }}>
-          Click a voltage to trace in oscilloscope
+        
+        <div className="debug-view-tabs">
+          <div className={`debug-tab ${viewMode === 'expert' ? 'active' : ''}`} onClick={() => setViewMode('expert')}>
+             Expert
+          </div>
+          <div className={`debug-tab ${viewMode === 'dashboard' ? 'active' : ''}`} onClick={() => setViewMode('dashboard')}>
+             Dashboard
+          </div>
+        </div>
+
+        <span style={{ fontSize: '0.7rem', color: '#475569', marginLeft: 'auto' }}>
+          t = {simTime.toFixed(3)}s • {history.length} samples
         </span>
       </div>
 
       <div className="debug-body">
-        {/* ── Component Table ── */}
-        <div className="debug-table-wrap">
-          <table className="debug-table">
-            <thead>
-              <tr>
-                {['Type', 'ID (Short)', 'Pin A', 'Pin B', 'Pin C', 'ΔV', 'Current', 'State'].map(h => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {components.filter(c => c.type !== 'GROUND').map(comp => {
-                const p0 = comp.pins[0]?.id;
-                const p1 = comp.pins[1]?.id;
-                const p2 = comp.pins[2]?.id;
-                const v0 = nodeVoltages?.[p0];
-                const v1 = nodeVoltages?.[p1];
-                const dv = (v0 !== undefined && v1 !== undefined) ? v0 - v1 : null;
-                const ic = branchCurrents?.[comp.id];
-                const damaged = comp.properties.damaged;
-                const is3pin = comp.pins.length >= 3;
+        {viewMode === 'expert' ? (
+          <div className="debug-table-wrap">
+            <table className="debug-table">
+              <thead>
+                <tr>
+                  {['Type', 'ID (Short)', 'Pin A', 'Pin B', 'Pin C', 'ΔV', 'Current', 'State'].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {components.filter(c => c.type !== 'GROUND').map(comp => {
+                  const p0 = comp.pins[0]?.id;
+                  const p1 = comp.pins[1]?.id;
+                  const p2 = comp.pins[2]?.id;
+                  const v0 = nodeVoltages?.[p0];
+                  const v1 = nodeVoltages?.[p1];
+                  const dv = (v0 !== undefined && v1 !== undefined) ? v0 - v1 : null;
+                  const ic = branchCurrents?.[comp.id];
+                  const damaged = comp.properties.damaged;
+                  const is3pin = comp.pins.length >= 3;
 
-                const model = registry.get(comp.type);
-                let stateEl;
-                if (damaged) {
-                  stateEl = <span style={{ color: '#f87171' }}>DAMAGED</span>;
-                } else if (model && model.getDebugState) {
-                  const debugVal = model.getDebugState(comp, nodeVoltages, branchCurrents);
-                  stateEl = <span style={{ color: '#60a5fa' }}>{debugVal}</span>;
-                } else if (comp.type === 'CAPACITOR') {
-                  const vCap = comp.properties.vCap ?? 0;
-                  const pct = Math.min(100, Math.abs(vCap) / (comp.properties.maxVoltage || 50) * 100);
-                  stateEl = (
-                    <span style={{ color: '#818cf8' }}>
-                      {vCap >= 0 ? '+' : ''}{vCap.toFixed(2)}V
-                      <span style={{ color: '#1e3a5f', marginLeft: '3px' }}>({pct.toFixed(0)}%)</span>
-                    </span>
+                  const model = registry.get(comp.type);
+                  let stateEl;
+                  if (damaged) stateEl = <span style={{ color: '#f87171' }}>DAMAGED</span>;
+                  else if (model && model.getDebugState) stateEl = <span style={{ color: '#60a5fa' }}>{model.getDebugState(comp, nodeVoltages, branchCurrents)}</span>;
+                  else {
+                    const i = Math.abs(ic || 0);
+                    stateEl = <span style={{ color: i > 0.001 ? '#34d399' : '#334155' }}>{i > 0.001 ? 'ACTIVE' : 'IDLE'}</span>;
+                  }
+
+                  return (
+                    <tr key={comp.id} style={{ background: damaged ? 'rgba(239,68,68,0.06)' : 'transparent' }}>
+                      <td style={{ color: '#94a3b8', fontWeight: 500 }}>{comp.type}</td>
+                      <td style={{ fontFamily: 'monospace', color: '#334155', fontSize: '0.65rem' }}>{comp.id.substring(0, 8)}</td>
+                      <td><VBtn pinId={p0} label={is3pin ? 'B' : null} nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} /></td>
+                      <td><VBtn pinId={p1} label={is3pin ? 'C' : null} nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} /></td>
+                      <td>{p2 ? <VBtn pinId={p2} label="E" nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} /> : <span style={{ color: '#1e293b' }}>—</span>}</td>
+                      <td style={{ fontFamily: 'monospace', color: dv !== null && Math.abs(dv) > 0.05 ? '#cbd5e1' : '#334155' }}>{dv !== null ? `${dv.toFixed(2)}V` : '—'}</td>
+                      <td style={{ fontFamily: 'monospace', color: Math.abs(ic || 0) > 0.001 ? '#fbbf24' : '#334155' }}>{ic !== undefined ? fmtI(ic) : '—'}</td>
+                      <td>{stateEl}</td>
+                    </tr>
                   );
-                } else if (comp.type === 'NPN' || comp.type === 'PNP') {
-                  const active = Math.abs(ic || 0) > 0.001;
-                  stateEl = <span style={{ color: active ? '#34d399' : '#334155' }}>{active ? 'ACTIVE' : 'CUTOFF'}</span>;
-                } else if (comp.type === 'SWITCH') {
-                  stateEl = <span style={{ color: comp.properties.closed ? '#34d399' : '#334155' }}>{comp.properties.closed ? 'CLOSED' : 'OPEN'}</span>;
-                } else if (comp.type === 'LED' || comp.type === 'BULB') {
-                  const on = Math.abs(ic || 0) > 0.0005;
-                  stateEl = <span style={{ color: on ? '#fbbf24' : '#334155' }}>{on ? 'ON' : 'OFF'}</span>;
-                }
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="debug-dashboard">
+            {components.filter(c => c.type !== 'GROUND' && c.type !== 'WIRE').map(comp => {
+              const sm = smoothValuesRef.current.get(comp.id) || { v: 0, i: 0 };
+              const damaged = comp.properties.damaged;
+              const isSource = comp.category === 'Sources';
+              const p0 = comp.pins[0]?.id;
+              const isWatched = watchedPins.includes(p0);
 
-                return (
-                  <tr key={comp.id} style={{ background: damaged ? 'rgba(239,68,68,0.06)' : 'transparent' }}>
-                    <td style={{ color: '#94a3b8', fontWeight: 500 }}>{comp.type}</td>
-                    <td style={{ fontFamily: 'monospace', color: '#334155', fontSize: '0.65rem' }}>{comp.id.substring(0, 8)}</td>
-                    <td>
-                      <VBtn pinId={p0} label={is3pin ? 'B' : null} nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} />
-                    </td>
-                    <td>
-                      <VBtn pinId={p1} label={is3pin ? 'C' : null} nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} />
-                    </td>
-                    <td>
-                      {p2 ? <VBtn pinId={p2} label="E" nodeVoltages={nodeVoltages} watchedPins={watchedPins} onTogglePin={onTogglePin} /> : <span style={{ color: '#1e293b' }}>—</span>}
-                    </td>
-                    <td style={{ fontFamily: 'monospace', color: dv !== null && Math.abs(dv) > 0.05 ? '#cbd5e1' : '#334155' }}>
-                      {dv !== null ? `${dv.toFixed(2)}V` : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'monospace', color: Math.abs(ic || 0) > 0.001 ? '#fbbf24' : '#334155' }}>
-                      {ic !== undefined ? fmtI(ic) : '—'}
-                    </td>
-                    <td>{stateEl}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+              return (
+                <div 
+                  key={comp.id} 
+                  className={`insight-card ${isWatched ? 'watched' : ''}`} 
+                  onClick={() => {
+                    const bestPin = selectSmartPin(comp, nodeVoltages);
+                    if (bestPin) onTogglePin(bestPin);
+                  }}
+                  style={damaged ? { borderColor: '#f87171', background: 'rgba(239,68,68,0.05)' } : {}}
+                >
+                  <div className="insight-header">
+                     <span className="insight-title">{comp.type.replace(/_/g, ' ')}</span>
+                     {isWatched && <span className="probe-indicator">● PROBE</span>}
+                     {damaged && <span style={{ color: '#f87171', fontSize: '0.55rem', fontWeight: 'bold' }}>✖ FAIL</span>}
+                  </div>
+                  <div className="insight-value" style={{ color: damaged ? '#f87171' : (isSource ? '#60a5fa' : 'inherit') }}>
+                    {Math.abs(sm.v) > 0.1 ? `${sm.v.toFixed(2)}V` : fmtI(sm.i)}
+                  </div>
+                  <div className="insight-sub">{comp.properties.label || comp.id.substring(0, 5)} {isSource ? '' : `• ${Math.abs(sm.i * sm.v).toFixed(2)}W`}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Horizontal Resize handle */}
+        <div className="debug-h-resize-handle" onMouseDown={(e) => handleResizeStart('width', e)} />
 
         {/* ── Oscilloscope ── */}
-        <div className="debug-scope">
-          <svg
-            width="100%"
-            height="110"
-            viewBox={`0 0 ${SCOPE_W} ${SCOPE_H}`}
-            preserveAspectRatio="none"
-            className="debug-scope-svg"
-          >
-            {/* Grid */}
-            {[0.25, 0.5, 0.75].map(f => (
-              <line key={`h${f}`} x1="0" y1={f * SCOPE_H} x2={SCOPE_W} y2={f * SCOPE_H} stroke="#0c1a2e" strokeWidth="1" />
-            ))}
-            {[0.2, 0.4, 0.6, 0.8].map(f => (
-              <line key={`v${f}`} x1={f * SCOPE_W} y1="0" x2={f * SCOPE_W} y2={SCOPE_H} stroke="#0c1a2e" strokeWidth="1" />
-            ))}
-            <line x1="0" y1={SCOPE_H / 2} x2={SCOPE_W} y2={SCOPE_H / 2} stroke="#0f2847" strokeWidth="1" />
+        <div className="debug-scope" style={{ width: scopeWidth }}>
+          <div className="scope-controls">
+            <div className="scope-control-group">
+               <span>TIME</span>
+               <button className="sc-btn" onClick={() => setTimeScale(Math.max(1, timeScale - 1))}>-</button>
+               <input type="number" className="sc-input" value={timeScale} onChange={e => setTimeScale(Math.max(1, parseInt(e.target.value)||1))} />
+               <button className="sc-btn" onClick={() => setTimeScale(timeScale + 1)}>+</button>
+            </div>
+            <div className="scope-control-group">
+               <span>VOLT</span>
+               <button className="sc-btn" onClick={() => setVScale(parseFloat((vScale - 0.2).toFixed(1)) || 0.1)}>-</button>
+               <input type="number" className="sc-input" step="0.1" value={vScale} onChange={e => setVScale(parseFloat(e.target.value)||1)} />
+               <button className="sc-btn" onClick={() => setVScale(parseFloat((vScale + 0.2).toFixed(1)))}>+</button>
+            </div>
+            <span style={{ fontSize: '0.6rem', color: '#1e293b', fontStyle: 'italic' }}>Drag border to resize width</span>
+          </div>
+          
+          <div style={{ flex: 1, position: 'relative', background: '#040a14', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden' }}>
+            <svg className="debug-scope-svg" width="100%" height={dynamicScopeH} viewBox={`0 0 ${SCOPE_W} ${dynamicScopeH}`} preserveAspectRatio="none" style={{ background: 'transparent' }}>
+              {/* Horizontal Grid */}
+              {[dynamicScopeH * 0.2, dynamicScopeH * 0.4, dynamicScopeH * 0.6, dynamicScopeH * 0.8].map(y => (
+                <line key={`g${y}`} x1="0" y1={y} x2={SCOPE_W} y2={y} className="scope-grid-line" strokeWidth="1" />
+              ))}
+              {/* Vertical Grid */}
+              {[SCOPE_W/4, SCOPE_W/2, 3*SCOPE_W/4].map(x => (
+                <line key={`x${x}`} x1={x} y1="0" x2={x} y2={dynamicScopeH} className="scope-grid-line" strokeWidth="1" />
+              ))}
+              
+              {/* Cartesian 0V Axis */}
+              <line x1="0" y1={dynamicScopeH/2} x2={SCOPE_W} y2={dynamicScopeH/2} className="cartesian-axis" strokeWidth="1" />
 
-            {scopeChannels.length === 0 && (
-              <text x={SCOPE_W / 2} y={SCOPE_H / 2 + 4} textAnchor="middle" fill="#0f2847" fontSize="11">
-                Click a voltage value to trace it here
-              </text>
-            )}
+              {scopeChannels.length === 0 ? (
+                <text x={SCOPE_W / 2} y={dynamicScopeH / 2 + 4} textAnchor="middle" fill="#1e293b" fontSize="10" fontWeight="bold">SELECT PIN TO PROBE</text>
+              ) : (
+                <text x="5" y={dynamicScopeH/2 - 5} fill="rgba(96, 165, 250, 0.4)" fontSize="8" fontWeight="bold">0V REF</text>
+              )}
 
-            {scopeChannels.map(ch => (
-              <polyline key={ch.pinId} points={ch.pts} fill="none" stroke={ch.color} strokeWidth="1.5" opacity="0.9" />
-            ))}
+              {scopeChannels.map(ch => (
+                <polyline key={ch.pinId} points={ch.pts} fill="none" stroke={ch.color} strokeWidth="2" opacity="1" style={{ transition: 'all 0.1s' }} />
+              ))}
+            </svg>
+          </div>
 
-            {/* Y-axis voltage labels for first channel */}
-            {scopeChannels[0] && (
-              <>
-                <text x="4" y="10" fill={scopeChannels[0].color} fontSize="8" opacity="0.6">
-                  {scopeChannels[0].yMax.toFixed(0)}V
-                </text>
-                <text x="4" y={SCOPE_H - 2} fill={scopeChannels[0].color} fontSize="8" opacity="0.6">
-                  {scopeChannels[0].yMin.toFixed(0)}V
-                </text>
-              </>
-            )}
-          </svg>
-
-          {/* Channel legend */}
           <div className="debug-scope-legend">
-            {scopeChannels.length === 0 && (
-              <span style={{ fontSize: '0.65rem', color: '#1e3a5f' }}>No channels active</span>
-            )}
             {scopeChannels.map(ch => (
               <div key={ch.pinId} className="debug-scope-channel">
-                <span style={{ color: ch.color }}>⬤</span>
-                <span className="debug-scope-pin" title={ch.pinId}>{ch.pinId.substring(0, 18)}</span>
-                <span style={{ color: ch.color, fontFamily: 'monospace' }}>{fmtV(ch.current)}V</span>
+                <span style={{ color: ch.color, fontSize: '0.8rem' }}>⬤</span>
+                <span className="debug-scope-pin">{ch.pinId.split('_').pop()}</span>
+                <span style={{ color: ch.color, fontFamily: 'monospace', fontWeight: 'bold' }}>{ch.current.toFixed(2)}V</span>
                 <button className="debug-scope-remove" onClick={() => onTogglePin(ch.pinId)}>×</button>
               </div>
             ))}

@@ -15,6 +15,7 @@ export default function ComponentNode({
   isSimulating,
   zoom = 1,
   showProbes = false,
+  vizMode = 'digital',
   nodeVoltages = {}
 }) {
   const { id, type, x, y, rotation, pins } = component;
@@ -154,50 +155,64 @@ export default function ComponentNode({
           {component.properties.label}
         </text>
       )}
-      {pins.map((pin) => (
-        <g key={pin.id}>
-          <circle 
-            cx={pin.offsetX} 
-            cy={pin.offsetY} 
-            r="6" 
-            fill={wiringStartPin?.pinId === pin.id ? "var(--wire-active)" : "var(--wire-color)"}
-            stroke="var(--bg-color)"
-            strokeWidth="2"
-            className="component-pin"
-            style={{ cursor: isSimulating ? 'not-allowed' : 'crosshair', transition: 'fill 0.2s', opacity: (isSimulating && !pin.label) ? 0 : 1 }}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              if (e.button !== 0 || isSimulating) return;
-              const rad = rotation * Math.PI / 180;
-              const absX = x + pin.offsetX * Math.cos(rad) - pin.offsetY * Math.sin(rad);
-              const absY = y + pin.offsetX * Math.sin(rad) + pin.offsetY * Math.cos(rad);
-              startWiring(pin.id, absX, absY);
-            }}
-            onPointerUp={(e) => {
-              e.stopPropagation();
-              if (wiringStartPin) finishWiring(pin.id);
-            }}
-          />
-          {pin.label && (
-            <text 
-              x={pin.offsetX} 
-              y={pin.offsetY + (pin.offsetY > 0 ? 12 : -8)} 
-              fill="var(--text-secondary)" 
-              fontSize="8" 
-              textAnchor="middle"
-              style={{ pointerEvents: 'none', opacity: isSimulating ? 0.4 : 1 }}
-            >
-              {pin.label}
-            </text>
-          )}
-          {showProbes && nodeVoltages && (
-            <g transform={`translate(${pin.offsetX + (pin.offsetX > 0 ? 10 : -10)}, ${pin.offsetY})`}>
-               <rect x="-5" y="-6" width="10" height="12" rx="2" fill={nodeVoltages[pin.id] > 2.0 ? "#ef4444" : "#1e40af"} opacity="0.8" />
-               <text y="3" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold">{nodeVoltages[pin.id] > 2.0 ? '1' : '0'}</text>
-            </g>
-          )}
-        </g>
-      ))}
+      {pins.map((pin) => {
+        const v = nodeVoltages[pin.id] || 0;
+        const isAnalog = vizMode === 'analog';
+        const probeText = isAnalog ? `${v.toFixed(1)}V` : (v > 2.0 ? '1' : '0');
+        const probeWidth = isAnalog ? 32 : 12;
+        
+        const getProbeColor = (val) => {
+          if (!isAnalog) return val > 2.0 ? "#ef4444" : "#1e40af";
+          if (val > 0.1) return "#ef4444"; // Hot
+          if (val < -0.1) return "#3b82f6"; // Negative
+          return "#4b5563"; // Groundish/neutral
+        };
+
+        return (
+          <g key={pin.id}>
+            <circle 
+              cx={pin.offsetX} 
+              cy={pin.offsetY} 
+              r="6" 
+              fill={wiringStartPin?.pinId === pin.id ? "var(--wire-active)" : "var(--wire-color)"}
+              stroke="var(--bg-color)"
+              strokeWidth="2"
+              className="component-pin"
+              style={{ cursor: isSimulating ? 'not-allowed' : 'crosshair', transition: 'fill 0.2s', opacity: (isSimulating && !pin.label) ? 0 : 1 }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                if (e.button !== 0 || isSimulating) return;
+                const rad = rotation * Math.PI / 180;
+                const absX = x + pin.offsetX * Math.cos(rad) - pin.offsetY * Math.sin(rad);
+                const absY = y + pin.offsetX * Math.sin(rad) + pin.offsetY * Math.cos(rad);
+                startWiring(pin.id, absX, absY);
+              }}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                if (wiringStartPin) finishWiring(pin.id);
+              }}
+            />
+            {pin.label && (
+              <text 
+                x={pin.offsetX} 
+                y={pin.offsetY + (pin.offsetY > 0 ? 12 : -8)} 
+                fill="var(--text-secondary)" 
+                fontSize="8" 
+                textAnchor="middle"
+                style={{ pointerEvents: 'none', opacity: isSimulating ? 0.4 : 1 }}
+              >
+                {pin.label}
+              </text>
+            )}
+            {showProbes && nodeVoltages && (
+              <g transform={`translate(${pin.offsetX + (pin.offsetX > 0 ? (isAnalog ? 20 : 10) : (isAnalog ? -20 : -10))}, ${pin.offsetY})`}>
+                 <rect x={-probeWidth/2} y="-6" width={probeWidth} height={12} rx="2" fill={getProbeColor(v)} opacity="0.9" />
+                 <text y="3" textAnchor="middle" fill="white" fontSize={isAnalog ? "7" : "9"} fontWeight="bold">{probeText}</text>
+              </g>
+            )}
+          </g>
+        );
+      })}
     </g>
   );
 }

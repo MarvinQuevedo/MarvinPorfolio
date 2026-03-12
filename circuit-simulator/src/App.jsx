@@ -87,12 +87,45 @@ function App() {
   }, [state.selectedElementId]);
 
   // Reset debug history when simulation starts/stops
+  // Also auto-probe interesting pins if nothing is selected
   useEffect(() => {
     if (state.isSimulating) {
       simTimeRef.current = 0;
       debugHistoryRef.current = [];
+      
+      const savedProbes = JSON.parse(localStorage.getItem('debug_watched_pins') || '[]');
+      if (watchedPins.length === 0 && savedProbes.length > 0) {
+        setWatchedPins(savedProbes);
+      } else if (watchedPins.length === 0 && state.components.length > 0) {
+        // Smart Auto-Probe: Target the Input and the Final Load
+        const source = state.components.find(c => c.type === 'AC_VOLTAGE_SOURCE' || c.type === 'DC_VOLTAGE_SOURCE');
+        const resistor = state.components.find(c => c.type === 'RESISTOR');
+        const otherLoad = state.components.find(c => c.type === 'LED' || c.type === 'CAPACITOR');
+        
+        const autoProbes = [];
+        // 1. Monitor the Source Output (Usually Pin B / index 1)
+        if (source && source.pins[1]) autoProbes.push(source.pins[1].id);
+        
+        // 2. Monitor the Final Load (Usually Pin A / index 0)
+        const load = resistor || otherLoad;
+        if (load && load.pins[0]) {
+          // Only add if it's not the same node (avoiding ground or source output)
+          if (!autoProbes.includes(load.pins[0].id)) {
+            autoProbes.push(load.pins[0].id);
+          }
+        }
+        
+        if (autoProbes.length > 0) setWatchedPins(autoProbes);
+      }
     }
-  }, [state.isSimulating]);
+  }, [state.isSimulating, state.components.length]);
+
+  // Persist watched pins
+  useEffect(() => {
+    if (watchedPins.length > 0) {
+      localStorage.setItem('debug_watched_pins', JSON.stringify(watchedPins));
+    }
+  }, [watchedPins]);
 
   const componentsRef = useRef(state.components);
   const wiresRef = useRef(state.wires);
@@ -173,7 +206,7 @@ function App() {
           simTimeRef.current += subSteps * dt;
           const history = debugHistoryRef.current;
           history.push({ time: simTimeRef.current, nodeVoltages: { ...currentResults.nodeVoltages } });
-          if (history.length > 300) history.splice(0, history.length - 300);
+          if (history.length > 800) history.splice(0, history.length - 800);
 
           // Use cumulative updates so no state change is lost between frames
           const finalResults = { 
@@ -257,6 +290,13 @@ function App() {
             />
             Damage Physics
           </label>
+          <button 
+            className="tb-btn" 
+            onClick={() => dispatch({ type: 'TOGGLE_VIZ_MODE' })}
+            style={{ minWidth: '100px', background: state.vizMode === 'analog' ? 'rgba(96,165,250,0.1)' : 'transparent' }}
+          >
+            {state.vizMode === 'analog' ? '📈 Analog Mode' : '🔢 Digital Mode'}
+          </button>
           <button className="tb-btn" onClick={() => setShowExamples(true)}>🔬 Examples</button>
           <button
             className="tb-btn"
@@ -297,6 +337,7 @@ function App() {
               isSimulating={state.isSimulating}
               zoom={zoom}
               showProbes={showDebugger}
+              vizMode={state.vizMode}
               nodeVoltages={state.simulationResults.nodeVoltages}
             />
           )}

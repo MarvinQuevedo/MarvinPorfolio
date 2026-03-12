@@ -68,43 +68,70 @@ export default function WireNode({
 
   const pathData = buildPath(allPoints);
 
-  // ─── current flow appearance ───────────────────────────────────────────────
+  // ─── current flow phase state ──────────────────────────────────────────────
+  const phaseRef = useRef(0);
+  const lastTimeRef = useRef(performance.now());
+  const smoothIRef = useRef(0);
+
+  // Update current-based visuals
   const hasCurrent = Math.abs(simulationCurrent) > 1e-6;
-  const strokeColor = isSelected
-    ? 'var(--accent-color)'
-    : hasCurrent ? 'var(--wire-active)' : 'var(--wire-color)';
+  
+  if (isSimulating) {
+    const now = performance.now();
+    const dtReal = (now - lastTimeRef.current) / 1000;
+    lastTimeRef.current = now;
+    
+    // Smooth the magnitude for stable visuals in AC
+    smoothIRef.current = smoothIRef.current * 0.7 + Math.abs(simulationCurrent) * 0.3;
+    
+    // Accumulate phase based on current direction and magnitude
+    // At higher currents, speed increases.
+    const speedScale = 200; 
+    phaseRef.current -= (simulationCurrent * speedScale * dtReal);
+    // Keep phase in a reasonable range to avoid precision issues
+    if (Math.abs(phaseRef.current) > 10000) phaseRef.current %= 100;
+  } else {
+    lastTimeRef.current = performance.now(); // Keep time sync when paused
+  }
+
+  const iVis = smoothIRef.current;
+  const hasCurrentVis = iVis > 1e-4;
 
   let tooltipText = 'Wire';
-  if (hasCurrent) {
-    const i = Math.abs(simulationCurrent);
-    if (i < 0.001)      tooltipText = `${(i * 1e6).toFixed(2)} µA`;
-    else if (i < 1)     tooltipText = `${(i * 1e3).toFixed(2)} mA`;
-    else                tooltipText = `${i.toFixed(3)} A`;
+  if (hasCurrentVis) {
+    if (iVis < 0.001)      tooltipText = `${(iVis * 1e6).toFixed(1)} µA`;
+    else if (iVis < 1)     tooltipText = `${(iVis * 1e3).toFixed(1)} mA`;
+    else                tooltipText = `${iVis.toFixed(3)} A`;
   }
 
   let flowEl = null;
-  if (hasCurrent) {
-    const i        = Math.abs(simulationCurrent);
-    const norm     = Math.min(1, Math.log10(1 + i * 100) / 2);
-    const dur      = 1.2 - norm * 1.1;
+  if (hasCurrentVis) {
+    const norm     = Math.min(1, Math.log10(1 + iVis * 100) / 2);
     const dashLen  = 4 + norm * 6;
-    const gapLen   = 14 - norm * 8;
+    const gapLen   = 12 - norm * 6;
+    
     let dashColor  = '#67e8f9';
-    if (i > 0.1) dashColor = '#fbbf24';
-    if (i > 0.5) dashColor = '#f97316';
-    if (i > 1.0) dashColor = '#ef4444';
+    if (iVis > 0.1) dashColor = '#fbbf24';
+    if (iVis > 0.5) dashColor = '#f97316';
+    if (iVis > 1.0) dashColor = '#ef4444';
+
     flowEl = (
       <path d={pathData} fill="none" stroke={dashColor}
-        strokeWidth={1.5 + norm * 2}
+        strokeWidth={1.5 + norm * 2.5}
         strokeDasharray={`${dashLen} ${gapLen}`}
         style={{
-          animation: `currentFlow ${dur}s linear infinite ${simulationCurrent < 0 ? 'reverse' : 'normal'}`,
-          filter: `drop-shadow(0 0 ${3 + norm * 5}px ${dashColor})`,
+          strokeDashoffset: phaseRef.current,
+          filter: `drop-shadow(0 0 ${2 + norm * 6}px ${dashColor})`,
           pointerEvents: 'none',
+          transition: 'stroke 0.3s, stroke-width 0.3s', // Smooth transitions
         }}
       />
     );
   }
+
+  const strokeColor = isSelected
+    ? 'var(--accent-color)'
+    : hasCurrentVis ? 'var(--wire-active)' : 'var(--wire-color)';
 
   // ─── drag logic (all handled via useRef so no stale closure bugs) ──────────
   const updateWaypoints = useCallback((newWps) => {

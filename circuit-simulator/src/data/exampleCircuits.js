@@ -60,6 +60,16 @@ const mkCap = (id, x, y, c = 100e-6, rot = 0, vCap = 0) => ({
   properties: { capacitance: c, maxVoltage: 50, vCap },
   pins: mk2(id),
 });
+const mkDiode = (id, x, y, rot = 0) => ({
+  id, type: 'DIODE', x, y, rotation: rot,
+  properties: { modelId: '1N4001', useCustom: false },
+  pins: mk2(id),
+});
+const mkAcSrc = (id, x, y, v = 12, f = 60) => ({
+  id, type: 'AC_VOLTAGE_SOURCE', x, y, rotation: 0,
+  properties: { amplitude: v, frequency: f, time: 0 },
+  pins: mk2(id),
+});
 const mkNPN = (id, x, y, modelId = '2N3904', rot = 0) => {
   const m = { '2N3904': { beta:100, Vbe:0.65, Ron:10, maxIc:0.2 }, '2N2222': { beta:150, Vbe:0.60, Ron:5, maxIc:0.6 } };
   return { id, type: 'NPN', x, y, rotation: rot, properties: { modelId, useCustom: false, ...(m[modelId] ?? m['2N3904']) }, pins: mkBJT(id) };
@@ -358,6 +368,65 @@ const cascadedCounterExample = () => {
   };
 };
 
+const rectifierCircuit = () => {
+  const AC = 'ac1';
+  const G1 = 'g_ref';
+  const D1 = 'd_tl';
+  const D2 = 'd_tr';
+  const D3 = 'd_bl';
+  const D4 = 'd_br';
+  const C = 'c_smooth';
+  const R = 'r_load';
+
+  return {
+    components: [
+      mkAcSrc(AC, 80, 250, 12, 2),
+      mkGndComp(G1, 40, 250),
+      
+      // Bridge Rectifier
+      // Top row (High side): Anodes connected to AC inputs, Cathodes connected to DC+
+      { id: D1, type: 'DIODE', x: 340, y: 180, rotation: 0, properties: { modelId: '1N4001', label: 'D1' }, pins: mk2(D1) },
+      { id: D2, type: 'DIODE', x: 440, y: 180, rotation: 0, properties: { modelId: '1N4001', label: 'D2' }, pins: mk2(D2) },
+      
+      // Bottom row (Low side): Cathodes connected to AC inputs, Anodes connected to DC-
+      // Rotating 180 flips pins: p0(Anode) is now at Right, p1(Cathode) is now at Left
+      { id: D3, type: 'DIODE', x: 340, y: 320, rotation: 180, properties: { modelId: '1N4001', label: 'D3' }, pins: mk2(D3) },
+      { id: D4, type: 'DIODE', x: 440, y: 320, rotation: 180, properties: { modelId: '1N4001', label: 'D4' }, pins: mk2(D4) },
+      
+      // Smoothing & Load
+      mkCap(C, 580, 250, 470e-6, 90),
+      mkRes(R, 660, 250, 1000, 90),
+      mkGndComp('g_dc', 580, 320),
+      mkGndComp('g_load', 660, 320),
+    ],
+    wires: [
+      W('w_ac_src_g', pId(AC, '0'), pId(G1, '0')),
+      
+      // AC Phase 1 Bus (Vertical at x=310)
+      W('w_in_a', pId(AC, '1'), pId(D1, '0'), [{x: 180, y: 250}, {x: 180, y: 180}, {x: 310, y: 180}]),
+      W('w_in_a_link', pId(D1, '0'), pId(D3, '1'), [{x: 310, y: 180}, {x: 310, y: 320}]),
+      
+      // AC Phase 2 Bus (Vertical at x=410) - Connected to Neutral/Gnd for simulation
+      W('w_in_b', pId(G1, '0'), pId(D2, '0'), [{x: 40, y: 100}, {x: 410, y: 100}, {x: 410, y: 180}]),
+      W('w_in_b_link', pId(D2, '0'), pId(D4, '1'), [{x: 410, y: 180}, {x: 410, y: 320}]),
+      
+      // DC+ Bus (Connecting Cathodes of D1 and D2)
+      W('w_dc_pos_line', pId(D1, '1'), pId(D2, '1'), [{x: 370, y: 140}, {x: 470, y: 140}, {x: 470, y: 180}]),
+      // DC+ to Load
+      W('w_dc_to_cap', pId(D2, '1'), pId(C, '0'), [{x: 470, y: 180}, {x: 580, y: 180}, {x: 580, y: 220}]),
+      W('w_cap_to_res', pId(C, '0'), pId(R, '0'), [{x: 580, y: 220}, {x: 660, y: 220}]),
+      
+      // DC- Bus (Connecting Anodes of D3 and D4)
+      W('w_dc_neg_line', pId(D3, '0'), pId(D4, '0'), [{x: 370, y: 360}, {x: 470, y: 360}, {x: 470, y: 320}]),
+      // DC- Ground reference
+      W('w_dc_neg_g', pId(D4, '0'), pId('g_dc', '0'), [{x: 470, y: 320}, {x: 580, y: 320}]),
+      
+      W('w_cap_gnd', pId(C, '1'), pId('g_dc', '0')),
+      W('w_res_gnd', pId(R, '1'), pId('g_load', '0')),
+    ]
+  };
+};
+
 export const EXAMPLE_CIRCUITS = [
   {
     id: 'cascaded-counter',
@@ -398,5 +467,13 @@ export const EXAMPLE_CIRCUITS = [
     tags: ['NPN', 'Switch'],
     icon: '🔌',
     circuit: npnSwitchCircuit(),
+  },
+  {
+    id: 'bridge-rectifier',
+    name: 'Bridge Rectifier',
+    description: 'Converts AC to DC using a 4-diode bridge and a capacitor for smoothing.',
+    tags: ['AC', 'Diode', 'Rectifier', 'Capacitor'],
+    icon: '🌉',
+    circuit: rectifierCircuit(),
   },
 ];

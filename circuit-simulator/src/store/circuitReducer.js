@@ -7,7 +7,8 @@ export const initialState = {
   simulationResults: {
     nodeVoltages: {}, // pinId -> voltage
     branchCurrents: {} // compId -> current
-  }
+  },
+  vizMode: 'digital' // 'digital' or 'analog'
 };
 
 export function circuitReducer(state, action) {
@@ -150,6 +151,9 @@ export function circuitReducer(state, action) {
 
     case 'TOGGLE_DAMAGE':
       return { ...state, enableDamage: !state.enableDamage };
+
+    case 'TOGGLE_VIZ_MODE':
+      return { ...state, vizMode: state.vizMode === 'digital' ? 'analog' : 'digital' };
 
     case 'APPLY_DAMAGE':
       return {
